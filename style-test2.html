@@ -1,0 +1,459 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GOLDEN DOME — style test 2 (daylight valley)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1220;display:grid;place-items:center;overflow:hidden}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges}
+</style>
+<canvas id=c width=624 height=288></canvas>
+<script>
+// 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt) edge to edge.
+const W=624,H=288,HUD=14,GY=H-HUD;
+const c=document.getElementById('c'),g=c.getContext('2d');
+g.imageSmoothingEnabled=false;
+function fit(){const s=Math.max(1,Math.min(innerWidth/W,innerHeight/H));c.style.width=(W*s|0)+'px';c.style.height=(H*s|0)+'px';}
+addEventListener('resize',fit);fit();
+
+// ---- palette ---------------------------------------------------------------
+const SKY  =['#2f7fd0','#4a95dc','#63a9e7','#7fbdf0','#9dd0f6','#bfe2fb','#dcf0fd'];
+const CLOUD=['#ffffff','#eef6ff','#d3e5f7','#b2cdea','#93b3d9'];
+const FAR  =['#b6d3ea','#9ec2e0','#88b1d6','#749fc9'];      // haze range, back
+const MID  =['#9dc0cf','#82a9bb','#6b93a6','#577f92'];      // haze range, front
+const MIDG =['#6f9e79','#5b8a66','#487455'];                // green on the mid range
+const GRS  =['#0f3318','#1a4a22','#27682d','#38883a','#4da346','#6cbf57','#93d873','#b9ea94'];
+const ROCK =['#2b2723','#3d3730','#51473c','#655949','#7a6b57','#8f7f68','#a5947c','#bcab92','#d2c4ac'];
+const RIV  =['#1d4a72','#2c6b9c','#4291c4','#6fb6de','#a8dcf2','#e2f5ff'];
+const STL  =['#1d222b','#2c3440','#404a58','#586373','#77838f','#9aa6b2','#c2ccd6','#e6edf3'];
+const CY   =['#0a7f9e','#00c8ef','#7ceaff','#c9f6ff'];
+const OR   =['#c25a10','#ff8a2b','#ffd98a'];
+const YOU  =['#7d5a12','#c9902a','#ffc94d','#ffe79a','#fff8e0'];
+const THEM =['#5c1524','#a82840','#d94040','#f2703f','#ffb072'];
+const RED  =['#8e1420','#e03a3a','#ff8a72'];
+
+const B8=[[0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],[12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],
+          [3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],[15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]];
+const dith=(x,y)=>B8[(x&7+8)&7][(y&7+8)&7]/64;
+const hash=(i,sd)=>{const v=Math.sin((i+sd*911.7)*127.1)*43758.5453;return v-Math.floor(v);};
+const vn=(x,per,sd)=>{const i=Math.floor(x/per),f=x/per-i,u=f*f*(3-2*f);return hash(i,sd)*(1-u)+hash(i+1,sd)*u;};
+const fbm=(x,per,sd)=>vn(x,per,sd)*0.55+vn(x,per/2.3,sd+31)*0.3+vn(x,per/5.7,sd+67)*0.15;
+const cl=(v,a,z)=>v<a?a:v>z?z:v;
+const pick=(ramp,i)=>ramp[cl(Math.round(i),0,ramp.length-1)];
+
+// ---- authored terrain profile ---------------------------------------------
+// side-on elevation. flat runs = buildable, the jumps between them are cliffs.
+// left tall mesa -> shelf -> valley floor with the city -> shelf -> right mesa.
+const FLATS=[
+  {x0:-4, x1:104, y:142},   // left high mesa
+  {x0:104,x1:166, y:200},   // left shelf
+  {x0:166,x1:228, y:236},   // left valley lip (buildable)
+  {x0:228,x1:400, y:252},   // city floor
+  {x0:400,x1:462, y:234},   // right valley lip (buildable)
+  {x0:462,x1:520, y:194},   // right shelf
+  {x0:520,x1:628, y:152},   // right mesa
+];
+const TOP=new Int16Array(W);
+for(let x=0;x<W;x++){let y=250;for(const f of FLATS)if(x>=f.x0&&x<f.x1)y=f.y;TOP[x]=y;}
+const groundY=x=>TOP[cl(x|0,0,W-1)];
+
+// ---- background prerender --------------------------------------------------
+const bg=document.createElement('canvas');bg.width=W;bg.height=H;
+const b=bg.getContext('2d');
+const px=(x,y,col)=>{if(x<0||x>=W||y<0||y>=GY)return;b.fillStyle=col;b.fillRect(x,y,1,1);};
+
+// sky: bright at the horizon, deeper overhead
+(function sky(){
+  const HZ=200;
+  for(let y=0;y<GY;y++)for(let x=0;x<W;x++){
+    const t=Math.pow(cl(y/HZ,0,1),0.85)*(SKY.length-1), i=cl(t|0,0,SKY.length-2), f=t-i;
+    px(x,y,(f>dith(x,y))?SKY[i+1]:SKY[i]);
+  }
+})();
+
+// cumulus: puff union with a FLAT bottom, lit from top, shaded underside
+function cloud(cx,cy,scale,seed){
+  const n=4+((hash(seed,2)*4)|0), puffs=[];
+  for(let i=0;i<n;i++){
+    const t=i/(n-1)-0.5;
+    const r=(7+hash(seed+i,5)*11)*scale*(1-Math.abs(t)*0.5);
+    puffs.push({x:cx+t*34*scale,y:cy-r*0.72-hash(seed+i,9)*5*scale,r});
+  }
+  const R=44*scale;
+  for(let y=(cy-R)|0;y<=cy;y++)for(let x=(cx-R*1.5)|0;x<=cx+R*1.5;x++){
+    let cover=-99,ctop=999;
+    for(const p of puffs){
+      const d=p.r-Math.hypot(x-p.x,(y-p.y)*1.15);
+      if(d>cover)cover=d;
+      if(Math.abs(x-p.x)<p.r)ctop=Math.min(ctop,p.y-p.r);
+    }
+    if(cover<0)continue;
+    if(cover<1.6&&dith(x,y)>0.42)continue;
+    const dv=(y-ctop)/Math.max(6,cy-ctop);
+    let col=CLOUD[0];
+    if(dv>0.60)col=CLOUD[1];
+    if(dv>0.74)col=CLOUD[2];
+    if(dv>0.89)col=CLOUD[3];
+    if(dv>0.55&&dv<0.66&&dith(x,y)>0.5)col=CLOUD[0];
+    if(dv>0.84&&dv<0.93&&dith(x,y)>0.5)col=CLOUD[2];
+    if(y===((cy)|0)&&cover>2)col=CLOUD[3];
+    px(x,y,col);
+  }
+}
+// a high band and a dense horizon band -> depth
+[[58,64,1.25,1],[168,44,0.95,2],[300,74,1.35,3],[418,40,0.85,4],[540,68,1.15,5],[612,96,0.9,6]].forEach(a=>cloud(...a));
+[[24,132,0.62,11],[110,140,0.55,12],[196,134,0.7,13],[268,142,0.5,14],[352,136,0.62,15],
+ [432,144,0.55,16],[500,134,0.68,17],[578,142,0.52,18],[150,120,0.45,19],[398,120,0.42,20]].forEach(a=>cloud(...a));
+
+// ---- haze ranges -----------------------------------------------------------
+function range(peaks,base,jag,sd,ex){
+  const h=new Float32Array(W);
+  for(let x=0;x<W;x++){
+    let v=base;
+    for(const p of peaks){const t=1-Math.abs(x-p.x)/p.w; if(t>0)v=Math.max(v,p.h*Math.pow(t,ex||1.25));}
+    h[x]=v+(fbm(x,30,sd)-0.5)*jag;
+  }
+  return h;
+}
+function paintHaze(h,baseY,pal,green,sd){
+  for(let x=0;x<W;x++){
+    const top=Math.round(baseY-h[x]);
+    const sl=(h[cl(x+3,0,W-1)]-h[cl(x-3,0,W-1)])/6;        // sun from upper-right
+    const lit=cl(-sl*1.3,-1,1);
+    for(let y=top;y<GY;y++){
+      const d=y-top;
+      let i=1.4-lit*1.2+(fbm(x*0.7+y*0.9,13,sd+5)-0.5)*1.6-cl(d/70,0,1)*0.5;
+      if(d<2)i-=0.8;
+      let col=pick(pal,i);
+      if(green&&d>6+fbm(x,17,sd+9)*14){                     // forest creeping up the flanks
+        const gi=cl(1.2-lit*0.8+(fbm(x*1.3,9,sd+13)-0.5)*1.8,0,2);
+        if(dith(x,y)<0.72)col=green[Math.round(gi)];
+      }
+      px(x,y,col);
+    }
+  }
+}
+paintHaze(range([{x:20,h:112,w:120},{x:150,h:140,w:130},{x:296,h:120,w:118},{x:436,h:148,w:140},{x:596,h:116,w:126}],40,7,11),
+          GY, FAR, null, 11);
+paintHaze(range([{x:70,h:96,w:118},{x:230,h:114,w:134},{x:378,h:92,w:112},{x:520,h:118,w:140}],34,16,23,0.8),
+          GY, MID, MIDG, 23);
+
+// ---- rolling green hills (the band the city sits in front of) -------------
+(function hills(){
+  const h=range([{x:-10,h:66,w:150},{x:120,h:52,w:120},{x:250,h:22,w:130},{x:380,h:34,w:130},{x:520,h:50,w:120},{x:630,h:70,w:150}],26,16,41,0.85);
+  const baseY=252;
+  for(let x=0;x<W;x++){
+    const top=Math.round(baseY-h[x]);
+    const sl=(h[cl(x+3,0,W-1)]-h[cl(x-3,0,W-1)])/6;
+    const lit=cl(-sl*1.4,-1,1);
+    for(let y=top;y<GY;y++){
+      const d=y-top;
+      // warped noise -> foliage clumps instead of horizontal banding
+      const wx=x+(vn(y,11,53)-0.5)*18, wy=y+(vn(x,9,57)-0.5)*12;
+      const clump=fbm(wx*0.8,14,61)*0.6+fbm(wy*1.4,7,67)*0.4;
+      let i=4.1+lit*1.5+(clump-0.5)*3.4-cl(d/90,0,1)*1.6;
+      if(d<2)i+=1.1;
+      if(clump>0.74&&vn(x*1.7,5,71)>0.5)i-=2.2;             // dark tree pockets
+      px(x,y,pick(GRS,i));
+    }
+  }
+  // scattered pines on the hill line
+  const PINE=['..2..','.212.','.111.','11211','.1210','..0..','..0..'];
+  for(let x=2;x<W-2;x++){
+    if(hash(x,83)<0.80)continue;
+    const top=Math.round(baseY-h[x]);
+    if(top>246)continue;
+    for(let r=0;r<7;r++)for(let k=0;k<5;k++){const ch=PINE[r][k];if(ch==='.')continue;px(x-2+k,top-6+r,GRS[+ch]);}
+  }
+})();
+
+// ---- the city, in the valley ----------------------------------------------
+function win(x,y,warm){px(x,y,warm?OR[1]:CY[1]);}
+function tower(x,w,topY,baseY,tone,cap){
+  for(let y=topY;y<baseY;y++)for(let xx=x;xx<x+w;xx++){
+    let i=tone;
+    if(xx===x)i+=1.4; else if(xx===x+w-1)i-=1.2;            // lit left edge, shaded right
+    else if(dith(xx,y)>0.55)i+=0.5;
+    if(y<topY+2)i+=1.0;
+    px(xx,y,pick(STL,i));
+  }
+  for(let y=topY+3;y<baseY-2;y+=5){                          // window bands
+    for(let xx=x+1;xx<x+w-1;xx++){
+      if(hash(xx*13+y*7,3)<0.55)continue;
+      win(xx,y,hash(xx*5+y,9)>0.82);
+    }
+    if(w>7&&hash(y,17)>0.82)for(let xx=x+1;xx<x+w-1;xx++)px(xx,y+1,CY[0]);
+  }
+  if(cap){for(let xx=x-1;xx<x+w+1;xx++)px(xx,topY-1,STL[6]);}
+}
+(function city(){
+  const F=252;
+  // back rank: hazier, cooler
+  for(const [x,w,h] of [[234,8,28],[246,6,37],[256,10,24],[270,7,41],[282,9,30],
+                        [334,8,35],[346,10,24],[360,7,38],[372,9,27],[384,8,21]])
+    tower(x,w,F-h,F,2.6,false);
+  // central spire: tapered stack + mast + hazard light
+  (function spire(){
+    const cx=312; let y=F;
+    for(const [w,hgt] of [[18,16],[14,15],[10,14],[7,12]]){
+      tower(cx-(w>>1),w,y-hgt,y,3.4,true);
+      y-=hgt;
+    }
+    for(let yy=y;yy>y-12;yy--)px(cx,yy,STL[6]);
+    px(cx,y-12,RED[1]);px(cx,y-13,RED[2]);
+    for(let yy=y+2;yy<y+16;yy+=4){px(cx-1,yy,CY[2]);px(cx+1,yy,CY[2]);}
+  })();
+  // front rank: brighter, wider slabs with big glass bands
+  for(const [x,w,h] of [[228,12,20],[242,14,26],[258,10,17],[270,14,28],[288,9,18],
+                        [330,12,26],[344,10,18],[356,14,23],[372,11,17],[385,12,21]])
+    tower(x,w,F-h,F,4.6,true);
+  // skywalks between the two halves
+  for(const [x0,x1,y] of [[292,332,240],[300,326,247]]){
+    for(let x=x0;x<=x1;x++){px(x,y,STL[6]);px(x,y+1,STL[3]);px(x,y+2,STL[2]);
+      if(x%9===0)for(let k=3;k<7;k++)px(x,y+k,STL[2]);
+      if(x%3===0)px(x,y,CY[2]);}
+  }
+  // ground clutter / pads along the floor
+  for(let x=224;x<404;x+=1){px(x,F,STL[3]);px(x,F+1,STL[2]);}
+})();
+
+// ---- river through the valley ---------------------------------------------
+(function river(){
+  for(let y=238;y<GY;y++){
+    const cx=312+Math.sin((y-238)/17)*12+(vn(y,9,91)-0.5)*4;
+    const w=1.6+(y-238)*0.20;
+    for(let x=Math.round(cx-w);x<=Math.round(cx+w);x++){
+      const e=Math.abs(x-cx)/w;
+      let col=RIV[e>0.82?1:e>0.5?2:3];
+      if(vn(x*2+y*3,5,97)>0.80)col=RIV[4];
+      if(vn(x+y*7,4,101)>0.93)col=RIV[5];
+      px(x,y,col);
+      px(Math.round(cx-w)-1,y,GRS[1]);px(Math.round(cx+w)+1,y,GRS[2]);
+    }
+  }
+})();
+
+// ---- cliffs + grass caps (drawn last: they are the foreground) ------------
+function cliff(x0,x1,yTop,yBot,sd){
+  for(let x=x0;x<x1;x++){
+    // vertical ribbing: two beat frequencies -> columns of uneven width
+    const rib=Math.sin(x/3.1+fbm(x,26,sd)*8)+Math.sin(x/7.9+fbm(x,44,sd+3)*5)*0.75;
+    const broad=fbm(x,19,sd+9);
+    for(let y=yTop;y<yBot;y++){
+      const d=y-yTop;
+      const strata=Math.sin((y+vn(x,46,sd+11)*12)/14);      // bedding planes, gently wavy
+      let i=5.4+rib*2.1+(broad-0.5)*3.8+strata*1.1-cl(d/95,0,1)*1.8+(dith(x,y)-0.5)*1.0;
+      if(rib<-1.4)i-=3.4;                                    // fissure between columns
+      if(rib>1.5)i+=1.0;                                     // sunlit rib crown
+      if(d<3)i-=2.8;                                         // shadow under the grass lip
+      let col=pick(ROCK,i);
+      const veg=vn(x+y*0.7,15,sd+21)*0.55+vn(x-y*1.1,10,sd+27)*0.45;
+      if(veg>0.83&&d>6&&d<44&&rib>-0.9)                      // small moss clumps, upper face only
+        col=GRS[veg>0.90?3:2];
+      px(x,y,col);
+    }
+  }
+}
+function grassCap(x0,x1,yTop,sd){
+  for(let x=x0;x<x1;x++){
+    const base=3+(vn(x,6,sd)*4)|0;
+    const drip=vn(x,9,sd+3)>0.70?4+((vn(x,4,sd+5)*11)|0):0;
+    const n=base+drip;
+    for(let d=0;d<n;d++){
+      const y=yTop+d;
+      let col=d===0?GRS[6]:d<2?GRS[5]:d<base?GRS[4]:d<base+drip*0.6?GRS[3]:GRS[2];
+      if(dith(x,y)>0.6&&d>0&&d<base)col=GRS[d<3?6:3];
+      px(x,y,col);
+    }
+    px(x,yTop-1,GRS[7]);                                      // lit rim
+  }
+}
+// tufts + pines standing on a flat top
+function dressFlat(x0,x1,y,sd,skip){
+  const PINE=['..2..','.212.','.111.','11211','.1210','..0..','..0..'];
+  for(let x=x0+3;x<x1-3;x++){
+    if(skip&&skip.some(s=>x>s-16&&x<s+16))continue;
+    const r=hash(x,sd);
+    if(r>0.955){for(let ry=0;ry<7;ry++)for(let k=0;k<5;k++){const ch=PINE[ry][k];if(ch==='.')continue;px(x-2+k,y-6+ry,GRS[+ch]);}}
+    else if(r>0.88){px(x,y-1,GRS[5]);px(x-1,y-1,GRS[3]);px(x+1,y-1,GRS[4]);px(x,y-2,GRS[6]);}
+  }
+}
+
+const BATTX=[48,134,196,430,490,566];
+for(let i=0;i<FLATS.length;i++){
+  const f=FLATS[i], nxt=FLATS[i+1];
+  // a flat's cliff runs from its own top down to whatever the neighbouring lower flat is
+  const down=[];
+  if(nxt&&nxt.y>f.y)down.push([f.x1-2,f.x1+2,f.y,nxt.y]);
+  if(i>0&&FLATS[i-1].y>f.y)down.push([f.x0-2,f.x0+2,f.y,FLATS[i-1].y]);
+}
+// explicit cliff faces (x span, top, bottom) matched to the profile steps
+[[  0,108,142,GY,101],
+ [102,170,200,GY,113],
+ [164,232,236,GY,127],
+ [396,466,234,GY,131],
+ [458,524,194,GY,137],
+ [518,W  ,152,GY,149]].forEach(a=>cliff(...a));
+[[  0,108,142,101],[102,170,200,113],[164,232,236,127],
+ [226,402,252,143],[396,466,234,131],[458,524,194,137],[518,W,152,149]].forEach(a=>grassCap(...a));
+[[  4,102,142,201],[106,164,200,211],[168,226,236,251],[402,460,234,221],[464,518,194,231],[522,620,152,241]]
+  .forEach(a=>dressFlat(a[0],a[1],a[2],a[3],BATTX));
+
+// dark foreground forest corners -> depth
+(function fg(){
+  const PINE=['...2...','..212..','.11211.','1121121','..111..','.11211.','...0...','...0...'];
+  for(const [x0,x1,by] of [[0,120,GY+2],[452,W,GY+2]])
+    for(let x=x0;x<x1;x+=3){
+      if(hash(x,151)<0.35)continue;
+      const y=by-((hash(x,157)*10)|0);
+      for(let r=0;r<8;r++)for(let k=0;k<7;k++){const ch=PINE[r][k];if(ch==='.')continue;
+        px(x-3+k,y-7+r,[GRS[0],GRS[1],GRS[2]][+ch]);}
+    }
+})();
+
+// ---- sprites: 24x24 --------------------------------------------------------
+const SPM={'0':STL[0],'1':STL[1],'2':STL[2],'3':STL[3],'4':STL[4],'5':STL[5],'6':STL[6],
+           'a':CY[0],'b':CY[1],'c':CY[2],'d':OR[0],'e':OR[1],'f':OR[2]};
+const D=n=>'.'.repeat(n);
+const BASE=[                                   // shared concrete footing
+  '.4444444444.','.4333333334.','.43b3333b34.','.4222222224.','.4333333334.','.4444444444.','.1111111111.'];
+const LAUNCH=[D(12),D(12),
+  '...c....c...','...5....5...','...5....5...','...5....5...',
+  '..55555555..','..56666665..','..5b6666b5..','..56666665..','..55555555..',
+  ...BASE, D(12),D(12)];
+const TURRET=[D(12),D(12),
+  '......6.....','.....65.....','....655.....','...6554.....',
+  '..65554.....','..65554.....','..455544....','..b55554....','..4444444...',
+  ...BASE, D(12),D(12)];
+const DISH=[D(12),D(12),
+  '....c.......','...ccc......','..cbbbc.....','..cb6bc.....',
+  '..5b6b5.....','...56665....','....555.....','....555.....','..4444444...',
+  ...BASE, D(12),D(12)];
+function blit(sp,px_,py,swap){
+  for(let y=0;y<sp.length;y++){const row=sp[y];
+    for(let x=0;x<row.length;x++){
+      const ch=row[x]; if(ch==='.')continue;
+      g.fillStyle=(swap&&swap[ch])||SPM[ch]; g.fillRect(px_+x,py+y,1,1);
+    }}
+}
+const ORANGE={'b':OR[1],'c':OR[2]};
+const OUTLINE={};'0123456abcdef'.split('').forEach(k=>OUTLINE[k]=STL[0]);
+const KIND=[{sp:LAUNCH,range:225,cool:60},{sp:DISH,range:150,cool:24,laser:1},
+            {sp:TURRET,range:156,cool:30},{sp:LAUNCH,range:190,cool:44},
+            {sp:TURRET,range:160,cool:26,swap:ORANGE}];
+const BATT=BATTX.map((cx,i)=>({...KIND[i%KIND.length],x:cx-6}));
+BATT.forEach(t=>{t.y=groundY(t.x+6)-18;t.t=(Math.random()*t.cool)|0;});
+
+// ---- entities --------------------------------------------------------------
+const CITYS=[[230,308],[318,398]];
+const CITYX=CITYS.map(([a,z])=>({x:(a+z)>>1,w:z-a-20}));
+const G=0.0020;
+let foes=[],ints=[],booms=[],beams=[],tick=0;
+function launch(mirv){
+  const ct=CITYX[(Math.random()*CITYX.length)|0];
+  const tx=ct.x+(Math.random()-0.5)*ct.w;
+  const x0=cl(tx+(Math.random()*2-1)*280,4,W-4), y0=-12;
+  const ty=groundY(tx), T=240+Math.random()*90;
+  foes.push({x:x0,y:y0,vx:(tx-x0)/T,vy:((ty-y0)-0.5*G*T*T)/T,mirv:!!mirv,r:mirv?4:3,trail:[]});
+}
+const split=f=>{for(let i=0;i<3;i++)foes.push({x:f.x,y:f.y,vx:f.vx+(i-1)*0.42,vy:f.vy*0.85,mirv:false,r:3,trail:[]});};
+const boom=(x,y,k)=>booms.push({x,y,a:0,k});
+function step(){
+  tick++;
+  if(tick%38===0)launch(Math.random()<0.35);
+  for(const f of foes){
+    f.trail.push(f.x|0,f.y|0); if(f.trail.length>90)f.trail.splice(0,2);
+    f.x+=f.vx; f.vy+=G; f.y+=f.vy;
+    if(f.y>=groundY(f.x)){f.dead=1;boom(f.x,groundY(f.x)-2,0);}
+    if(f.x<-20||f.x>W+20)f.dead=1;
+  }
+  for(const t of BATT){
+    if(--t.t>0)continue;
+    let best=null,bp=-1;
+    for(const f of foes){ if(f.dead||f.lock)continue;
+      if(Math.hypot(f.x-t.x-6,f.y-t.y-10)>t.range)continue;
+      if(f.y>bp){bp=f.y;best=f;} }
+    if(!best)continue;
+    t.t=t.cool;
+    const sx=t.x+6,sy=t.y+3;
+    if(t.laser){
+      beams.push({x0:sx,y0:sy-4,x1:best.x,y1:best.y,a:0});
+      best.dead=1;boom(best.x,best.y,2); if(best.mirv)split(best);
+    }else{
+      best.lock=1;
+      const sp=3.8, eta=Math.hypot(best.x-sx,best.y-sy)/sp;
+      const a=Math.atan2(best.y+best.vy*eta+0.5*G*eta*eta-sy, best.x+best.vx*eta-sx);
+      ints.push({x:sx,y:sy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,tgt:best,trail:[]});
+    }
+  }
+  for(const m of ints){
+    m.trail.push(m.x|0,m.y|0); if(m.trail.length>44)m.trail.splice(0,2);
+    m.x+=m.vx;m.y+=m.vy;
+    if(m.tgt.dead){m.dead=1;continue;}
+    if(Math.hypot(m.tgt.x-m.x,m.tgt.y-m.y)<6){m.dead=1;m.tgt.dead=1;boom(m.tgt.x,m.tgt.y,1); if(m.tgt.mirv)split(m.tgt);}
+    if(m.y<-14||m.x<-14||m.x>W+14)m.dead=1;
+  }
+  for(const e of booms)if(++e.a>15)e.dead=1;
+  for(const e of beams)if(++e.a>5)e.dead=1;
+  foes=foes.filter(f=>!f.dead);ints=ints.filter(m=>!m.dead);
+  booms=booms.filter(e=>!e.dead);beams=beams.filter(e=>!e.dead);
+}
+function draw(){
+  g.drawImage(bg,0,0);
+  g.fillStyle=STL[7];
+  for(const t of BATT){const cx=t.x+6,cy=t.y+10;
+    for(let a=0;a<360;a+=14){const r=a*Math.PI/180;g.fillRect((cx+Math.cos(r)*t.range)|0,(cy+Math.sin(r)*t.range)|0,1,1);}}
+  for(const t of BATT){
+    for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]) blit(t.sp,t.x+dx,t.y+dy,OUTLINE);
+    blit(t.sp,t.x,t.y,t.swap);
+  }
+  for(const f of foes){
+    for(let i=0;i<f.trail.length;i+=2){
+      const age=(f.trail.length-i)/f.trail.length;
+      if(age>0.4&&(i>>1)%2)continue;
+      if(age>0.7&&(i>>1)%3)continue;
+      g.fillStyle=age>0.55?CLOUD[4]:age>0.28?CLOUD[3]:THEM[3];
+      g.fillRect(f.trail[i],f.trail[i+1],1,1);
+    }
+    g.fillStyle=THEM[0];g.fillRect((f.x-f.r)|0,(f.y-f.r)|0,f.r*2,f.r*2);
+    g.fillStyle=THEM[2];g.fillRect((f.x-f.r+1)|0,(f.y-f.r)|0,f.r*2-2,f.r*2-1);
+    g.fillStyle=THEM[4];g.fillRect(f.x|0,(f.y+f.r-1)|0,1,1);
+    if(f.mirv){g.fillStyle=YOU[4];g.fillRect((f.x-1)|0,(f.y-1)|0,3,3);}
+  }
+  for(const m of ints){
+    for(let i=0;i<m.trail.length;i+=2){
+      const age=(m.trail.length-i)/m.trail.length;
+      if(age>0.5&&(i>>1)%2)continue;
+      g.fillStyle=age>0.6?CLOUD[2]:age>0.3?YOU[3]:YOU[4];
+      g.fillRect(m.trail[i],m.trail[i+1],1,1);
+    }
+    g.fillStyle=YOU[4];g.fillRect(m.x|0,m.y|0,1,3);
+    g.fillStyle=YOU[2];g.fillRect(m.x|0,(m.y+3)|0,1,1);
+  }
+  for(const e of beams){
+    const n=Math.hypot(e.x1-e.x0,e.y1-e.y0)|0;
+    for(let i=0;i<n;i++){
+      const x=(e.x0+(e.x1-e.x0)*i/n)|0, y=(e.y0+(e.y1-e.y0)*i/n)|0;
+      g.fillStyle=e.a<2?CY[3]:(dith(x,y)>0.4?CY[2]:CY[1]);
+      g.fillRect(x,y,1,1);
+    }
+  }
+  for(const e of booms){
+    const st=(e.a/16*3)|0, rad=[4,8,11][st];
+    const pal=e.k===2?[CY[3],CY[2],CY[0]]:e.k?[YOU[4],OR[1],OR[0]]:[YOU[4],OR[1],THEM[1]];
+    for(let yy=-rad;yy<=rad;yy++)for(let xx=-rad;xx<=rad;xx++){
+      const d2=xx*xx+yy*yy; if(d2>rad*rad)continue;
+      const edge=d2>(rad-3)*(rad-3);
+      if(edge&&dith(e.x+xx,e.y+yy)>0.55)continue;
+      g.fillStyle=edge?pal[2]:(d2<6?pal[0]:pal[1]);
+      g.fillRect((e.x+xx)|0,(e.y+yy)|0,1,1);
+    }
+  }
+  g.fillStyle=STL[0];g.fillRect(0,GY,W,HUD);
+  g.fillStyle=STL[2];g.fillRect(0,GY,W,1);
+  let sx=6;
+  [SKY,CLOUD,FAR,MID,MIDG,GRS,ROCK,RIV,STL,CY,OR,YOU,THEM].forEach(ramp=>{
+    ramp.forEach(col=>{g.fillStyle=col;g.fillRect(sx,GY+4,4,7);sx+=4;}); sx+=3;
+  });
+}
+(function loop(){step();draw();requestAnimationFrame(loop);})();
+</script>

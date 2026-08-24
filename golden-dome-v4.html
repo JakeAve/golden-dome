@@ -1,0 +1,1045 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GOLDEN DOME — v4</title>
+<style>
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    background: #0b1220;
+    display: grid;
+    place-items: center;
+    overflow: hidden
+  }
+
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges
+  }
+</style>
+<canvas id=c width=624 height=288></canvas>
+<script>
+  // 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt) edge to edge.
+  const W = 624, H = 288, HUD = 26, GY = H - HUD;
+  const c = document.getElementById('c'), g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  function fit() { const s = Math.max(1, Math.min(innerWidth / W, innerHeight / H)); c.style.width = (W * s | 0) + 'px'; c.style.height = (H * s | 0) + 'px'; }
+  addEventListener('resize', fit); fit();
+
+  // ---- palette ---------------------------------------------------------------
+  const SKY = ['#2f7fd0', '#4a95dc', '#63a9e7', '#7fbdf0', '#9dd0f6', '#bfe2fb', '#dcf0fd'];
+  const CLOUD = ['#ffffff', '#eef6ff', '#d3e5f7', '#b2cdea', '#93b3d9'];
+  const FAR = ['#b6d3ea', '#9ec2e0', '#88b1d6', '#749fc9'];      // haze range, back
+  const MID = ['#9dc0cf', '#82a9bb', '#6b93a6', '#577f92'];      // haze range, front
+  const MIDG = ['#6f9e79', '#5b8a66', '#487455'];                // green on the mid range
+  const GRS = ['#0f3318', '#1a4a22', '#27682d', '#38883a', '#4da346', '#6cbf57', '#93d873', '#b9ea94'];
+  const ROCK = ['#2b2723', '#3d3730', '#51473c', '#655949', '#7a6b57', '#8f7f68', '#a5947c', '#bcab92', '#d2c4ac'];
+  const RIV = ['#1d4a72', '#2c6b9c', '#4291c4', '#6fb6de', '#a8dcf2', '#e2f5ff'];
+  const STL = ['#1d222b', '#2c3440', '#404a58', '#586373', '#77838f', '#9aa6b2', '#c2ccd6', '#e6edf3'];
+  const CY = ['#0a7f9e', '#00c8ef', '#7ceaff', '#c9f6ff'];
+  const OR = ['#c25a10', '#ff8a2b', '#ffd98a'];
+  const YOU = ['#7d5a12', '#c9902a', '#ffc94d', '#ffe79a', '#fff8e0'];
+  const THEM = ['#5c1524', '#a82840', '#d94040', '#f2703f', '#ffb072'];
+  const RED = ['#8e1420', '#e03a3a', '#ff8a72'];
+
+  const B8 = [[0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26], [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25], [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21]];
+  const dith = (x, y) => B8[(x & 7 + 8) & 7][(y & 7 + 8) & 7] / 64;
+  const hash = (i, sd) => { const v = Math.sin((i + sd * 911.7) * 127.1) * 43758.5453; return v - Math.floor(v); };
+  const vn = (x, per, sd) => { const i = Math.floor(x / per), f = x / per - i, u = f * f * (3 - 2 * f); return hash(i, sd) * (1 - u) + hash(i + 1, sd) * u; };
+  const fbm = (x, per, sd) => vn(x, per, sd) * 0.55 + vn(x, per / 2.3, sd + 31) * 0.3 + vn(x, per / 5.7, sd + 67) * 0.15;
+  const cl = (v, a, z) => v < a ? a : v > z ? z : v;
+  const pick = (ramp, i) => ramp[cl(Math.round(i), 0, ramp.length - 1)];
+
+  // ---- authored terrain profile ---------------------------------------------
+  // side-on elevation. flat runs = buildable, the jumps between them are cliffs.
+  // left tall mesa -> shelf -> valley floor with the city -> shelf -> right mesa.
+  const FLATS = [
+    { x0: -4, x1: 104, y: 142 },   // left high mesa
+    { x0: 104, x1: 166, y: 200 },   // left shelf
+    { x0: 166, x1: 228, y: 252 },   // left valley lip (buildable, level with the city)
+    { x0: 228, x1: 400, y: 252 },   // city floor
+    { x0: 400, x1: 462, y: 252 },   // right valley lip (buildable, level with the city)
+    { x0: 462, x1: 520, y: 194 },   // right shelf
+    { x0: 520, x1: 628, y: 152 },   // right mesa
+  ];
+  const TOP = new Int16Array(W);
+  for (let x = 0; x < W; x++) { let y = 250; for (const f of FLATS) if (x >= f.x0 && x < f.x1) y = f.y; TOP[x] = y; }
+  const groundY = x => TOP[cl(x | 0, 0, W - 1)];
+
+  // ---- background prerender --------------------------------------------------
+  const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+  const b = bg.getContext('2d');
+  const px = (x, y, col) => { if (x < 0 || x >= W || y < 0 || y >= GY) return; b.fillStyle = col; b.fillRect(x, y, 1, 1); };
+
+  // sky: bright at the horizon, deeper overhead
+  (function sky() {
+    const HZ = 200;
+    for (let y = 0; y < GY; y++)for (let x = 0; x < W; x++) {
+      const t = Math.pow(cl(y / HZ, 0, 1), 0.85) * (SKY.length - 1), i = cl(t | 0, 0, SKY.length - 2), f = t - i;
+      px(x, y, (f > dith(x, y)) ? SKY[i + 1] : SKY[i]);
+    }
+  })();
+
+  // cumulus: puff union with a FLAT bottom, lit from top, shaded underside
+  function cloud(cx, cy, scale, seed) {
+    const n = 4 + ((hash(seed, 2) * 4) | 0), puffs = [];
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1) - 0.5;
+      const r = (7 + hash(seed + i, 5) * 11) * scale * (1 - Math.abs(t) * 0.5);
+      puffs.push({ x: cx + t * 34 * scale, y: cy - r * 0.72 - hash(seed + i, 9) * 5 * scale, r });
+    }
+    const R = 44 * scale;
+    for (let y = (cy - R) | 0; y <= cy; y++)for (let x = (cx - R * 1.5) | 0; x <= cx + R * 1.5; x++) {
+      let cover = -99, ctop = 999;
+      for (const p of puffs) {
+        const d = p.r - Math.hypot(x - p.x, (y - p.y) * 1.15);
+        if (d > cover) cover = d;
+        if (Math.abs(x - p.x) < p.r) ctop = Math.min(ctop, p.y - p.r);
+      }
+      if (cover < 0) continue;
+      if (cover < 1.6 && dith(x, y) > 0.42) continue;
+      const dv = (y - ctop) / Math.max(6, cy - ctop);
+      let col = CLOUD[0];
+      if (dv > 0.60) col = CLOUD[1];
+      if (dv > 0.74) col = CLOUD[2];
+      if (dv > 0.89) col = CLOUD[3];
+      if (dv > 0.55 && dv < 0.66 && dith(x, y) > 0.5) col = CLOUD[0];
+      if (dv > 0.84 && dv < 0.93 && dith(x, y) > 0.5) col = CLOUD[2];
+      if (y === ((cy) | 0) && cover > 2) col = CLOUD[3];
+      px(x, y, col);
+    }
+  }
+  // a high band and a dense horizon band -> depth
+  [[58, 64, 1.25, 1], [168, 44, 0.95, 2], [300, 74, 1.35, 3], [418, 40, 0.85, 4], [540, 68, 1.15, 5], [612, 96, 0.9, 6]].forEach(a => cloud(...a));
+  [[24, 132, 0.62, 11], [110, 140, 0.55, 12], [196, 134, 0.7, 13], [268, 142, 0.5, 14], [352, 136, 0.62, 15],
+  [432, 144, 0.55, 16], [500, 134, 0.68, 17], [578, 142, 0.52, 18], [150, 120, 0.45, 19], [398, 120, 0.42, 20]].forEach(a => cloud(...a));
+
+  // ---- haze ranges -----------------------------------------------------------
+  function range(peaks, base, jag, sd, ex) {
+    const h = new Float32Array(W);
+    for (let x = 0; x < W; x++) {
+      let v = base;
+      for (const p of peaks) { const t = 1 - Math.abs(x - p.x) / p.w; if (t > 0) v = Math.max(v, p.h * Math.pow(t, ex || 1.25)); }
+      h[x] = v + (fbm(x, 30, sd) - 0.5) * jag;
+    }
+    return h;
+  }
+  function paintHaze(h, baseY, pal, green, sd) {
+    for (let x = 0; x < W; x++) {
+      const top = Math.round(baseY - h[x]);
+      const sl = (h[cl(x + 3, 0, W - 1)] - h[cl(x - 3, 0, W - 1)]) / 6;        // sun from upper-right
+      const lit = cl(-sl * 1.3, -1, 1);
+      for (let y = top; y < GY; y++) {
+        const d = y - top;
+        let i = 1.4 - lit * 1.2 + (fbm(x * 0.7 + y * 0.9, 13, sd + 5) - 0.5) * 1.6 - cl(d / 70, 0, 1) * 0.5;
+        if (d < 2) i -= 0.8;
+        let col = pick(pal, i);
+        if (green && d > 6 + fbm(x, 17, sd + 9) * 14) {                     // forest creeping up the flanks
+          const gi = cl(1.2 - lit * 0.8 + (fbm(x * 1.3, 9, sd + 13) - 0.5) * 1.8, 0, 2);
+          if (dith(x, y) < 0.72) col = green[Math.round(gi)];
+        }
+        px(x, y, col);
+      }
+    }
+  }
+  paintHaze(range([{ x: 20, h: 112, w: 120 }, { x: 150, h: 140, w: 130 }, { x: 296, h: 120, w: 118 }, { x: 436, h: 148, w: 140 }, { x: 596, h: 116, w: 126 }], 40, 7, 11),
+    GY, FAR, null, 11);
+  paintHaze(range([{ x: 70, h: 96, w: 118 }, { x: 230, h: 114, w: 134 }, { x: 378, h: 92, w: 112 }, { x: 520, h: 118, w: 140 }], 34, 16, 23, 0.8),
+    GY, MID, MIDG, 23);
+
+  // ---- rolling green hills (the band the city sits in front of) -------------
+  (function hills() {
+    const h = range([{ x: -10, h: 66, w: 150 }, { x: 120, h: 52, w: 120 }, { x: 250, h: 22, w: 130 }, { x: 380, h: 34, w: 130 }, { x: 520, h: 50, w: 120 }, { x: 630, h: 70, w: 150 }], 26, 16, 41, 0.85);
+    const baseY = 252;
+    for (let x = 0; x < W; x++) {
+      const top = Math.round(baseY - h[x]);
+      const sl = (h[cl(x + 3, 0, W - 1)] - h[cl(x - 3, 0, W - 1)]) / 6;
+      const lit = cl(-sl * 1.4, -1, 1);
+      for (let y = top; y < GY; y++) {
+        const d = y - top;
+        // warped noise -> foliage clumps instead of horizontal banding
+        const wx = x + (vn(y, 11, 53) - 0.5) * 18, wy = y + (vn(x, 9, 57) - 0.5) * 12;
+        const clump = fbm(wx * 0.8, 14, 61) * 0.6 + fbm(wy * 1.4, 7, 67) * 0.4;
+        let i = 4.1 + lit * 1.5 + (clump - 0.5) * 3.4 - cl(d / 90, 0, 1) * 1.6;
+        if (d < 2) i += 1.1;
+        if (clump > 0.74 && vn(x * 1.7, 5, 71) > 0.5) i -= 2.2;             // dark tree pockets
+        px(x, y, pick(GRS, i));
+      }
+    }
+    // scattered pines on the hill line
+    const PINE = ['..2..', '.212.', '.111.', '11211', '.1210', '..0..', '..0..'];
+    for (let x = 2; x < W - 2; x++) {
+      if (hash(x, 83) < 0.80) continue;
+      const top = Math.round(baseY - h[x]);
+      if (top > 246) continue;
+      for (let r = 0; r < 7; r++)for (let k = 0; k < 5; k++) { const ch = PINE[r][k]; if (ch === '.') continue; px(x - 2 + k, top - 6 + r, GRS[+ch]); }
+    }
+  })();
+
+  // ---- the city, in the valley ----------------------------------------------
+  function win(x, y, warm) { px(x, y, warm ? OR[1] : CY[1]); }
+  function tower(x, w, topY, baseY, tone, cap) {
+    for (let y = topY; y < baseY; y++)for (let xx = x; xx < x + w; xx++) {
+      let i = tone;
+      if (xx === x) i += 1.4; else if (xx === x + w - 1) i -= 1.2;            // lit left edge, shaded right
+      else if (dith(xx, y) > 0.55) i += 0.5;
+      if (y < topY + 2) i += 1.0;
+      px(xx, y, pick(STL, i));
+    }
+    for (let y = topY + 3; y < baseY - 2; y += 5) {                          // window bands
+      for (let xx = x + 1; xx < x + w - 1; xx++) {
+        if (hash(xx * 13 + y * 7, 3) < 0.55) continue;
+        win(xx, y, hash(xx * 5 + y, 9) > 0.82);
+      }
+      if (w > 7 && hash(y, 17) > 0.82) for (let xx = x + 1; xx < x + w - 1; xx++)px(xx, y + 1, CY[0]);
+    }
+    if (cap) { for (let xx = x - 1; xx < x + w + 1; xx++)px(xx, topY - 1, STL[6]); }
+  }
+  (function city() {
+    const F = 252;
+    // back rank: hazier, cooler
+    for (const [x, w, h] of [[234, 8, 28], [246, 6, 37], [256, 10, 24], [270, 7, 41], [282, 9, 30],
+    [334, 8, 35], [346, 10, 24], [360, 7, 38], [372, 9, 27], [384, 8, 21]])
+      tower(x, w, F - h, F, 2.6, false);
+    // central spire: tapered stack + mast + hazard light
+    (function spire() {
+      const cx = 312; let y = F;
+      for (const [w, hgt] of [[18, 16], [14, 15], [10, 14], [7, 12]]) {
+        tower(cx - (w >> 1), w, y - hgt, y, 3.4, true);
+        y -= hgt;
+      }
+      for (let yy = y; yy > y - 12; yy--)px(cx, yy, STL[6]);
+      px(cx, y - 12, RED[1]); px(cx, y - 13, RED[2]);
+      for (let yy = y + 2; yy < y + 16; yy += 4) { px(cx - 1, yy, CY[2]); px(cx + 1, yy, CY[2]); }
+    })();
+    // front rank: brighter, wider slabs with big glass bands
+    for (const [x, w, h] of [[228, 12, 20], [242, 14, 26], [258, 10, 17], [270, 14, 28], [288, 9, 18],
+    [330, 12, 26], [344, 10, 18], [356, 14, 23], [372, 11, 17], [385, 12, 21]])
+      tower(x, w, F - h, F, 4.6, true);
+    // skywalks between the two halves
+    for (const [x0, x1, y] of [[292, 332, 240], [300, 326, 247]]) {
+      for (let x = x0; x <= x1; x++) {
+        px(x, y, STL[6]); px(x, y + 1, STL[3]); px(x, y + 2, STL[2]);
+        if (x % 9 === 0) for (let k = 3; k < 7; k++)px(x, y + k, STL[2]);
+        if (x % 3 === 0) px(x, y, CY[2]);
+      }
+    }
+    // ground clutter / pads along the floor
+    for (let x = 224; x < 404; x += 1) { px(x, F, STL[3]); px(x, F + 1, STL[2]); }
+  })();
+
+  // ---- river through the valley ---------------------------------------------
+  (function river() {
+    for (let y = 238; y < GY; y++) {
+      const cx = 312 + Math.sin((y - 238) / 17) * 12 + (vn(y, 9, 91) - 0.5) * 4;
+      const w = 1.6 + (y - 238) * 0.20;
+      for (let x = Math.round(cx - w); x <= Math.round(cx + w); x++) {
+        const e = Math.abs(x - cx) / w;
+        let col = RIV[e > 0.82 ? 1 : e > 0.5 ? 2 : 3];
+        if (vn(x * 2 + y * 3, 5, 97) > 0.80) col = RIV[4];
+        if (vn(x + y * 7, 4, 101) > 0.93) col = RIV[5];
+        px(x, y, col);
+        px(Math.round(cx - w) - 1, y, GRS[1]); px(Math.round(cx + w) + 1, y, GRS[2]);
+      }
+    }
+  })();
+
+  // ---- cliffs + grass caps (drawn last: they are the foreground) ------------
+  function cliff(x0, x1, yTop, yBot, sd) {
+    for (let x = x0; x < x1; x++) {
+      // vertical ribbing: two beat frequencies -> columns of uneven width
+      const rib = Math.sin(x / 3.1 + fbm(x, 26, sd) * 8) + Math.sin(x / 7.9 + fbm(x, 44, sd + 3) * 5) * 0.75;
+      const broad = fbm(x, 19, sd + 9);
+      for (let y = yTop; y < yBot; y++) {
+        const d = y - yTop;
+        const strata = Math.sin((y + vn(x, 46, sd + 11) * 12) / 14);      // bedding planes, gently wavy
+        let i = 5.4 + rib * 2.1 + (broad - 0.5) * 3.8 + strata * 1.1 - cl(d / 95, 0, 1) * 1.8 + (dith(x, y) - 0.5) * 1.0;
+        if (rib < -1.4) i -= 3.4;                                    // fissure between columns
+        if (rib > 1.5) i += 1.0;                                     // sunlit rib crown
+        if (d < 3) i -= 2.8;                                         // shadow under the grass lip
+        let col = pick(ROCK, i);
+        const veg = vn(x + y * 0.7, 15, sd + 21) * 0.55 + vn(x - y * 1.1, 10, sd + 27) * 0.45;
+        if (veg > 0.83 && d > 6 && d < 44 && rib > -0.9)                      // small moss clumps, upper face only
+          col = GRS[veg > 0.90 ? 3 : 2];
+        px(x, y, col);
+      }
+    }
+  }
+  function grassCap(x0, x1, yTop, sd) {
+    for (let x = x0; x < x1; x++) {
+      const base = 3 + (vn(x, 6, sd) * 4) | 0;
+      const drip = vn(x, 9, sd + 3) > 0.70 ? 4 + ((vn(x, 4, sd + 5) * 11) | 0) : 0;
+      const n = base + drip;
+      for (let d = 0; d < n; d++) {
+        const y = yTop + d;
+        let col = d === 0 ? GRS[6] : d < 2 ? GRS[5] : d < base ? GRS[4] : d < base + drip * 0.6 ? GRS[3] : GRS[2];
+        if (dith(x, y) > 0.6 && d > 0 && d < base) col = GRS[d < 3 ? 6 : 3];
+        px(x, y, col);
+      }
+      px(x, yTop - 1, GRS[7]);                                      // lit rim
+    }
+  }
+  // tufts + pines standing on a flat top
+  function dressFlat(x0, x1, y, sd, skip) {
+    const PINE = ['..2..', '.212.', '.111.', '11211', '.1210', '..0..', '..0..'];
+    for (let x = x0 + 3; x < x1 - 3; x++) {
+      if (skip && skip.some(s => x > s - 16 && x < s + 16)) continue;
+      const r = hash(x, sd);
+      if (r > 0.955) { for (let ry = 0; ry < 7; ry++)for (let k = 0; k < 5; k++) { const ch = PINE[ry][k]; if (ch === '.') continue; px(x - 2 + k, y - 6 + ry, GRS[+ch]); } }
+      else if (r > 0.88) { px(x, y - 1, GRS[5]); px(x - 1, y - 1, GRS[3]); px(x + 1, y - 1, GRS[4]); px(x, y - 2, GRS[6]); }
+    }
+  }
+
+  const BATTX = [30, 78, 122, 150, 184, 212, 416, 444, 478, 506, 546, 594];
+  for (let i = 0; i < FLATS.length; i++) {
+    const f = FLATS[i], nxt = FLATS[i + 1];
+    // a flat's cliff runs from its own top down to whatever the neighbouring lower flat is
+    const down = [];
+    if (nxt && nxt.y > f.y) down.push([f.x1 - 2, f.x1 + 2, f.y, nxt.y]);
+    if (i > 0 && FLATS[i - 1].y > f.y) down.push([f.x0 - 2, f.x0 + 2, f.y, FLATS[i - 1].y]);
+  }
+  // explicit cliff faces (x span, top, bottom) matched to the profile steps
+  [[0, 108, 142, GY, 101],
+  [102, 170, 200, GY, 113],
+  [164, 232, 252, GY, 127],
+  [396, 466, 252, GY, 131],
+  [458, 524, 194, GY, 137],
+  [518, W, 152, GY, 149]].forEach(a => cliff(...a));
+  [[0, 108, 142, 101], [102, 170, 200, 113], [164, 232, 252, 127],
+  [226, 402, 252, 143], [396, 466, 252, 131], [458, 524, 194, 137], [518, W, 152, 149]].forEach(a => grassCap(...a));
+  [[4, 102, 142, 201], [106, 164, 200, 211], [168, 226, 252, 251], [402, 460, 252, 221], [464, 518, 194, 231], [522, 620, 152, 241]]
+    .forEach(a => dressFlat(a[0], a[1], a[2], a[3], BATTX));
+
+  // dark foreground forest corners -> depth
+  (function fg() {
+    const PINE = ['...2...', '..212..', '.11211.', '1121121', '..111..', '.11211.', '...0...', '...0...'];
+    for (const [x0, x1, by] of [[0, 120, GY + 2], [452, W, GY + 2]])
+      for (let x = x0; x < x1; x += 3) {
+        if (hash(x, 151) < 0.35) continue;
+        const y = by - ((hash(x, 157) * 10) | 0);
+        for (let r = 0; r < 8; r++)for (let k = 0; k < 7; k++) {
+          const ch = PINE[r][k]; if (ch === '.') continue;
+          px(x - 3 + k, y - 7 + r, [GRS[0], GRS[1], GRS[2]][+ch]);
+        }
+      }
+  })();
+
+  // =============================================================================
+  // GAME
+  // =============================================================================
+  const FINE = 2, FW = W * FINE, FH = H * FINE;
+  c.width = FW; c.height = FH; g.imageSmoothingEnabled = false;
+
+  // ---- sprite palettes (threats from bestiary.html, batteries from armory.html)
+  const TP = {
+    k: '#12141c', '1': '#2f3d1c', '2': '#5a7028', '3': '#8ba33c', '4': '#b8cf5e',
+    '5': '#8a99ab', '6': '#c2ccd6', '7': '#e6edf3', '8': '#d94040', '9': '#8e1420',
+    a: '#3a1f5c', b: '#6b3fa0', c: '#9b6ae0', d: '#c9a6ff', e: '#2c3440', f: '#586373', g: '#9aa6b2', i: '#c9902a',
+    j: '#1a1508', l: '#ffd94a', m: '#b8912a', n: '#0a7f9e', o: '#00c8ef', p: '#7ceaff', q: '#c9f6ff',
+    r: '#16171f', s: '#2a2c38', t: '#ff8a2b', u: '#ffd98a', E: '#ff4d4d', W: '#fff8e0', A: '#ffc94d', C: '#7ceaff'
+  };
+  const BP = {
+    k: '#12141c', '1': '#3a3f4a', '2': '#565d6b', '3': '#7b8494', '4': '#a5aebd',
+    '5': '#2f3d1c', '6': '#5a7028', '7': '#8ba33c', '8': '#b8cf5e', '9': '#6b7c94', a: '#9fb0c6', b: '#d6e2f0', c: '#f2f7ff',
+    d: '#5c2a10', e: '#a3521a', f: '#e08b2a', g: '#ffbe55', h: '#0a3f5c', i: '#0a7f9e', j: '#00c8ef', l: '#7ceaff',
+    x: '#d94040', y: '#8e1420', G: '#ffc94d', W: '#fff8e0', O: '#ff8a2b', C: '#7ceaff', E: '#ff4d4d', R: '#c25a10'
+  };
+  const SPR = {
+    lug: ['.....kkk.....', '....k433k....', '...k43321k...', '..k4332211k..', '..k4332211k..', '..k4332211k..', '..k43AA211k..', '..k43AW211k..', '..k4332211k..', '..k4332211k..', '..k4332211k..', '..k4kkkk11k..', '..k4332211k..', '..k4332211k..', '..k4332211k..', '.kk4332211kk.', 'k2k4332211k1k', 'k2k4332211k1k', '...k22221k...'],
+    needle: ['......k......', '.....k8k.....', '.....k8k.....', '....k988k....', '....k988k....', '....k765k....', '....k765k....', '....k765k....', '....k7C5k....', '....k765k....', '....k765k....', '....k988k....', '....k765k....', '....k765k....', '....k765k....', '..k6k765k6k..', '.k66k765k66k.', 'k666k765k666k', '....k555k....'],
+    hive: ['......kkk......', '.....kdcbk.....', '....kdccbbk....', '...kddccbbak...', '..kddccbbbaak..', '..kddccbbbaak..', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddCbbCbbCaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '..kddccbbbaak..', '..kddccbbbaak..', '.kkddccbbbaakk.', 'kbkddccbbbaakak', 'kbkddccbbbaakak', '...kbbbbbbbk...'],
+    pip: ['....k....', '...kck...', '...kck...', '..kdcbk..', '..kdcbk..', '..kWcbk..', '..kdcbk..', '..kdcbk..', '.kkdcbkk.', 'kckdcbkck', '..kbbbk..'],
+    anvil: ['..kkkkkkkkkkk..', '..kggffffeeek..', '.kkggffffeeekk.', '.kAAffffffeeek.', '.kAAffffffeeek.', '.kggAAffffeeek.', '.kggAAffffeeek.', '.kggffAAffeeek.', '.kggffAAffeeek.', '.kggffffAAeeek.', '.kggffffAAeeek.', '.kggffffffiiek.', '.kggffffffiiek.', '.kAAffffffeeek.', '.kkggffffeeekk.', '..kggffffeeek..', '..kkkkkkkkkkk..', '...kfffffffk...'],
+    wasp: ['......k......', '.....klk.....', '....kljlk....', '...kljjjlk...', '..kEljjjlEk..', '..kEljjjlEk..', '..kljjjjjlk..', '..klllllllk..', '..kmmmmmmmk..', '..kljjjjjlk..', '..kljjjjjlk..', '..klllllllk..', '..kmmmmmmmk..', '..kljjjjjlk..', '..kljjjjjlk..', '.kkljjjjjlkk.', 'klkljjjjjlklk', 'klkljjjjjlklk', '...kjjjjjk...'],
+    ghost: ['......k......', '.....kqk.....', '....kqppk....', '...kqpponk...', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqWppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '.kkqqppoonkk.', 'kpkqqppoonknk', 'kpkqqppoonknk', '...kooooek...'],
+    warden: ['.........kkk.........', '........kstsk........', '.......ksrtrsk.......', '......ksrrtrrsk......', '.....ksrrrtrrrsk.....', '....ksrrrrtrrrrsk....', '...ksrrrrrtrrrrrsk...', '...ksrrrrrurrrrrsk...', '...ksrrrrrtrrrrrsk...', '...kstttrrrrrtttsk...', '...ksuuurrrrruuusk...', '...kstttrrrrrtttsk...', '...ksrrrrrtrrrrrsk...', '...ksrrrrrurrrrrsk...', '...ksrrrrrtrrrrrsk...', '...ksrrrrrrrrrrrsk...', '...ksrtrrrrrrrtrsk...', '...ksrtrrrrrrrtrsk...', '...ksrrrrrrrrrrrsk...', '..kksrrrrrrrrrrrskk..', '.ktksrrrrrrrrrrrsktk.', '.ktksrrrrrrrrrrrsktk.', '.ktksrrrrrrrrrrrsktk.', '.....ksssssssssk.....'],
+    pac: ['..kkkkkkkkkkkkkk..', '..kkk7kk7kk7kk7k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..kkkkkkkkkkkkkk..', '.k43333333333332k.', '.k43333333333332k.', '.k43333333333332k.', '.kkkkkkkkkkkkkkkk.', '.k4k2222222222k4k.', '.k4k2222222222k4k.', '.kkkkkkkkkkkkkkkk.'],
+    thaad: ['...kkkkkk...', '...kkkkkk...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kxxxxk...', '...kyyyyk...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kkkkkk...', '..k99aa99k..', '.k99aaaa99k.', '.k9aGGaaa9k.', 'kk99aaaa99kk', 'k1122222211k', 'kkkkkkkkkkkk'],
+    flak: ['..kggffffffek.....', '..kggffffffek.....', '..kggfGffffek.....', '..kggffffffek.....', '..keeeeeeeeek.....', '.keeeffffffffeeek.', '.k11222222222211k.', '.kkkkkkkkkkkkkkkk.'],
+    thaadr: ['...k...', '..k1k..', '..k1k..', '..k1k..', '..kck..', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', 'kkccbkk', '.kcabk.', '.kcabk.', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', 'kkccbkk', 'kkccbkk', '..kfk..'],
+    icept: ['..k..', '.kck.', '.kck.', '.kbk.', '.kxk.', '.kbk.', '.kbk.', 'kkbkk', '.kkk.'],
+    dew: ['....kkkkkkkk....', '..kkiijjjjiikk..', '.kiijjlllllljik.', '.kijjllWWWWlljk.', '.kijjllWWWWlljk.', '.kiijjlllllljik.', '..kkiijjjjiikk..', '....kkkkkkkk....', '......k99k......', '......k99k......', '.k99aaaaaaaa99k.', 'kk99aaaaaaaa99kk', '.k99aaaaaaaa99k.', 'kk99aaaaaaaa99kk', '.k112222222211k.', '.kkkkkkkkkkkkkk.'],
+  };
+  function render(rows, pal, ov) {
+    const cv = document.createElement('canvas'); cv.width = rows[0].length; cv.height = rows.length;
+    const q = cv.getContext('2d');
+    rows.forEach((r, j) => { for (let i = 0; i < r.length; i++) { const ch = r[i]; if (ch === '.') continue; const col = ov && ch in ov ? ov[ch] : pal[ch]; if (!col) continue; q.fillStyle = col; q.fillRect(i, j, 1, 1); } });
+    return cv;
+  }
+  const IMG = {};
+  for (const k of ['lug', 'needle', 'hive', 'pip', 'anvil', 'wasp', 'ghost', 'warden']) IMG[k] = render(SPR[k], TP);
+  for (const k of ['pac', 'thaad', 'flak', 'dew', 'icept', 'thaadr']) IMG[k] = render(SPR[k], BP);
+  const MK = {   // threat variants: base sprite recolored — mk2 red, mk3 black/orange
+    lug2: ['lug', { '1': '#5c1524', '2': '#8e1420', '3': '#d94040', '4': '#ff8a72' }],
+    needle2: ['needle', { '5': '#8e1420', '6': '#d94040', '7': '#ff8a72' }],
+    hive2: ['hive', { a: '#5c1524', b: '#8e1420', c: '#d94040', d: '#ffb072' }],
+    anvil2: ['anvil', { e: '#2c3440', f: '#586373', g: '#9aa6b2', A: '#ff4d4d', i: '#d94040' }],
+    wasp2: ['wasp', { j: '#c25a10', l: '#ff8a2b', m: '#8e1420' }],
+    warden2: ['warden', { r: '#2a1015', s: '#5c1524' }],
+    lug3: ['lug', { '1': '#16171f', '2': '#2a2c38', '3': '#f2703f', '4': '#ffb072' }],
+    needle3: ['needle', { '5': '#2a2c38', '6': '#f2703f', '7': '#ffb072' }],
+    hive3: ['hive', { a: '#16171f', b: '#2a2c38', c: '#f2703f', d: '#ffb072' }],
+    anvil3: ['anvil', { e: '#16171f', f: '#2a2c38', g: '#f2703f', A: '#ffb072', i: '#f2703f' }],
+    wasp3: ['wasp', { j: '#2a2c38', l: '#f2703f', m: '#16171f' }],
+    warden3: ['warden', { r: '#16171f', s: '#8e1420', t: '#ff4d4d' }],
+  };
+  for (const [k, [base, ov]] of Object.entries(MK)) IMG[k] = render(SPR[base], TP, ov);
+  IMG.warden_hot = render(SPR.warden, TP, { t: '#ffd98a', u: '#fff8e0' });
+  IMG.hive_hot = render(SPR.hive, TP, { C: '#fff8e0' });
+  IMG.wasp_lock = render(SPR.wasp, TP, { E: '#fff8e0' });
+  for (const k of Object.keys(MK)) {   // variant hot/lock flashes
+    if (k.startsWith('warden')) IMG[k + '_hot'] = render(SPR.warden, TP, { ...MK[k][1], t: '#ffd98a', u: '#fff8e0' });
+    if (k.startsWith('hive')) IMG[k + '_hot'] = render(SPR.hive, TP, { ...MK[k][1], C: '#fff8e0' });
+    if (k.startsWith('wasp')) IMG[k + '_lock'] = render(SPR.wasp, TP, { ...MK[k][1], E: '#fff8e0' });
+  }
+  IMG.dew_hot = render(SPR.dew, BP, { W: '#ffffff', l: '#7ceaff' });
+  IMG.dew_chg = render(SPR.dew, BP, { W: '#ffd94a' });
+  IMG.pac_empty = render(SPR.pac, BP, { '7': '#8e1420' });
+  IMG.thaad_empty = render(SPR.thaad, BP, { c: '#8e1420', b: '#8e1420', a: '#8e1420', G: '#6b7c94' });
+  for (const k of ['pac', 'thaad', 'flak', 'dew']) IMG[k + '_dead'] = render(SPR[k], BP, Object.fromEntries(Object.keys(BP).map(ch => [ch, ch === 'k' ? '#12141c' : '#3a3f4a'])));
+
+  // ---- CONFIG: every tuning number in one place --------------------------------
+  const CFG = {
+    startCash: 700, maxWave: 30, cityHP: 100, gravity: 0.0020, deployY: 112, blastRadius: 18,
+    tier: { peak: 1.25, ridge: 1, valley: .85 },                        // range multiplier by pad height
+    econ: {
+      waveIncome: 35, waveIncomePerWave: 4,                   // payout per surviving city
+      upgradeMult: [0.8, 1.6, 2],                              // × battery cost: L2, L3, path pick
+      sellRefund: 0.7, repairCost: 0.4
+    },                      // × paid / × battery cost
+    lvl: { dmg: 0.25, range: 0.10, thaadReload: 0.25 },               // bonus per upgrade level (max 2); THAAD reload 2s -> 1.5s -> 1s
+    wave: {
+      lateFrom: 6, lateMult: 0.14,                           // +14% headcount per wave past 6 — the ONLY difficulty ramp; a foe's hp/speed never changes
+      gapBase: 48, gapPerWave: 2.5, gapMin: 9,                // ticks between launches
+      salvoBase: 0.25, salvoPerWave: 0.01
+    },                   // multi-launch chance from wave 10
+    // bestiary: hp, flight time T, city damage, bounty $, radius
+    threats: {
+      // Each entry is that threat's whole story: combat stats, the wave it debuts (from),
+      // and its per-wave headcount equation (count, of wave n). elite: 1 = exact count,
+      // exempt from the late-wave headcount multiplier (CFG.wave.lateMult).
+      // A '2'/'3' suffix marks a mk2/mk3 variant: same rules as its family (isa() below),
+      // bigger numbers, red (mk2) or black/orange (mk3) skin.
+      lug: {
+        hp: 1, T: 380, dmg: 20, $: 8, r: 7,
+        from: 1, count: n => n <= 2 ? 2 + n * 2 : 3 + (n * 1.5 | 0),
+        info: 'LUG — slow, dumb, dies to anything'
+      },
+      lug2: {
+        hp: 5, T: 340, dmg: 25, $: 20, r: 7,
+        from: 13, count: n => 1 + ((n - 12) / 2 | 0),
+        info: 'LUG-2 — armoured lug: soaks a full PAC burst'
+      },
+      lug3: {
+        hp: 12, T: 310, dmg: 30, $: 40, r: 7,
+        from: 22, count: n => 1 + ((n - 21) / 3 | 0),
+        info: 'LUG-3 — flying bunker. Focus fire'
+      },
+      needle: {
+        hp: 1, T: 150, dmg: 15, $: 12, r: 6,
+        from: 5, count: n => 2 + ((n - 5) / 2 | 0), elite: 1,
+        info: 'NEEDLE — outruns PAC interceptors'
+      },
+      needle2: {
+        hp: 5, T: 135, dmg: 20, $: 35, r: 6,
+        from: 16, count: n => 1 + ((n - 16) / 3 | 0), elite: 1,
+        info: 'NEEDLE-2 — faster, tougher. Same counters: FLAK, DEW or THAAD'
+      },
+      needle3: {
+        hp: 12, T: 120, dmg: 25, $: 70, r: 6,
+        from: 24, count: n => 1 + ((n - 24) / 3 | 0), elite: 1,
+        info: 'NEEDLE-3 — blistering fast. FLAK, DEW or THAAD'
+      },
+      hive: {
+        hp: 3, T: 280, dmg: 30, $: 18, r: 8, pips: 5,
+        from: 10, count: n => 1 + ((n - 9) / 1.5 | 0),
+        info: 'HIVE — splits into 5 PIPS'
+      },
+      hive2: {
+        hp: 10, T: 260, dmg: 35, $: 45, r: 8, pips: 8,
+        from: 20, count: n => 1 + ((n - 19) / 3 | 0),
+        info: 'HIVE-2 — thick shell, splits into 8 PIPS'
+      },
+      hive3: {
+        hp: 25, T: 240, dmg: 40, $: 90, r: 8, pips: 12,
+        from: 27, count: n => 1 + ((n - 27) / 3 | 0),
+        info: 'HIVE-3 — splits into 12 PIPS. Kill it high'
+      },
+      pip: { hp: 1, T: 0, dmg: 10, $: 4, r: 5 },   // never launched: hives shed them
+      anvil: {
+        hp: 6, T: 500, dmg: 40, $: 30, r: 8,
+        from: 8, count: n => (n - 5) / 1.4 | 0,
+        info: 'ANVIL — small kinetics bounce off. FLAK, DEW or THAAD'
+      },
+      anvil2: {
+        hp: 15, T: 460, dmg: 50, $: 70, r: 8,
+        from: 17, count: n => 1 + ((n - 16) / 3 | 0),
+        info: 'ANVIL-2 — heavy armour. Small kinetics still bounce off'
+      },
+      anvil3: {
+        hp: 35, T: 420, dmg: 60, $: 140, r: 8,
+        from: 25, count: n => 1 + ((n - 24) / 4 | 0),
+        info: 'ANVIL-3 — a vault door with engines. THAAD or AP FLAK'
+      },
+      wasp: {
+        hp: 2, T: 260, dmg: 0, $: 25, r: 7,
+        from: 11, count: n => (n - 8) >> 1,
+        info: 'WASP — hunts your guns. Too small for FLAK: PAC, THAAD or DEW'
+      },
+      wasp2: {
+        hp: 10, T: 240, dmg: 0, $: 60, r: 7,
+        from: 21, count: n => (n - 18) / 3 | 0,
+        info: 'WASP-2 — hardened gun-hunter. Still too small for FLAK'
+      },
+      wasp3: {
+        hp: 25, T: 220, dmg: 0, $: 120, r: 7,
+        from: 27, count: n => (n - 24) / 3 | 0,
+        info: 'WASP-3 — armoured gun-hunter. Still too small for FLAK'
+      },
+      ghost: {
+        hp: 1, T: 170, dmg: 0, $: 0, r: 7,
+        from: 3, count: n => 5 + ((n - 3) / 2 | 0),
+        info: 'GHOST — harmless decoy that wastes PAC and FLAK shots. THAAD and DEW ignore it'
+      },
+      warden: {
+        hp: 120, T: 800, dmg: 50, $: 250, r: 12, shedEvery: 140,
+        from: 19, count: n => ((n - 19) % 3 === 0 ? 1 : 0) + (n >= 25 ? 1 : 0) + (n >= 29 ? 1 : 0), elite: 1,
+        info: 'WARDEN — boss. Soaks huge damage, sheds HIVES. Bring everything'
+      },
+      warden2: {
+        hp: 200, T: 750, dmg: 60, $: 500, r: 12, shedEvery: 140,
+        from: 27, count: n => n % 3 === 0 ? 1 : 0, elite: 1,   // waves 27 and 30
+        info: 'WARDEN-2 — boss. Sheds HIVE-2s'
+      },
+      warden3: {
+        hp: 350, T: 700, dmg: 75, $: 1000, r: 12, shedEvery: 140,
+        from: 30, count: () => 1, elite: 1,
+        info: 'WARDEN-3 — final boss. Sheds HIVE-3s'
+      },
+    },
+    // armory: cost, base dmg, damage type, range, cooldown ticks, shot speed + A/B upgrade paths
+    batteries: {
+      pac: {
+        info: 'Crate of 6 small homing interceptors: burst, then reload. Short reach. Bounces off ANVIL, NEEDLES outrun it, GHOSTS fool it.', name: 'PAC', cost: 200, dmg: 1, type: 'kinetic', range: 140, cool: 90, mag: 6, spd: 5, col: YOU[2],
+        paths: { A: { name: 'SEEKER', info: 'Agile seeker heads: CAN hit NEEDLES', seeker: 1, dmg: 1.2 }, B: { name: 'QUAD-PACK', info: '12-cell crate, half the reload', mag: 12, cool: 45 } }
+      },
+      thaad: {
+        info: 'Heavy interceptor, longest reach, fires every 2 seconds. Hunts the toughest target: catches NEEDLES, pierces ANVIL armour. Sees through GHOSTS.', name: 'THAAD', cost: 900, dmg: 8, type: 'kinetic', range: 270, cool: 120, spd: 10, col: YOU[3],
+        paths: { A: { name: 'EXO-KILL', info: '+50% reach, +50% damage: one-shots late HIVES', range: 1.5, dmg: 1.5 }, B: { name: 'SALVO', info: 'Fires 2 rounds per cycle', burst: 2, dmg: 0.8 } }
+      },
+      flak: {
+        info: 'Swivelling twin cannon hoses proximity rounds, area damage. Short reach. Shreds ANVIL and PIP swarms. WASPS are too small to burst, GHOSTS fool it.', name: 'FLAK', cost: 550, dmg: 1.5, type: 'blast', range: 160, cool: 70, spd: 6, col: OR[1],
+        paths: { A: { name: 'PROXIMITY', info: 'Huge burst disc, 8-round stream: PIP shredder', radius: 30, stream: 8 }, B: { name: 'AP', info: 'Armour-piercing: 2.5x damage, small burst. ANVIL killer', dmg: 2.5, radius: 12 } }
+      },
+      dew: {
+        info: 'Charges, then an instant volley of laser lines that burn EVERYTHING along them — NEEDLES cannot dodge. Levels add beams. Long reach, slow cycle. Ignores GHOSTS.', name: 'DEW', cost: 1200, dmg: 6, type: 'energy', range: 230, cool: 80, spd: 0, beams: [1, 2, 3], col: CY[1],
+        paths: { A: { name: 'PULSE', info: 'Fires 3x as often at half damage', cool: 25, charge: 15, dmg: 0.5 }, B: { name: 'LANCE', info: '2x damage, slower charge', dmg: 2, charge: 60 } }
+      },
+    },
+  };
+
+  // ---- defs --------------------------------------------------------------------
+  const TIER = CFG.tier, BT = CFG.batteries, TT = CFG.threats;
+  const SLOTS = [[30, 142, 'peak'], [78, 142, 'peak'], [546, 152, 'peak'], [594, 152, 'peak'],
+  [122, 200, 'ridge'], [150, 200, 'ridge'], [478, 194, 'ridge'], [506, 194, 'ridge'],
+  [184, 252, 'valley'], [212, 252, 'valley'], [416, 252, 'valley'], [444, 252, 'valley']].map(([x, y, tier]) => ({ x, y, tier, b: null }));
+  const P = (b, k, d) => { const m = b.path && b.def.paths[b.path]; return m && k in m ? m[k] : d; };   // path modifier lookup
+  const G = CFG.gravity, DEPLOY_Y = CFG.deployY, MAXWAVE = CFG.maxWave;
+  const CITIES = [{ a: 230, z: 308 }, { a: 318, z: 398 }].map(ct => ({ ...ct, hp: CFG.cityHP }));
+
+  // ---- state -------------------------------------------------------------------
+  let cash = CFG.startCash, wave = 0, phase = 'build', speed = 1, tick = 0, sel = null, selB = null, shake = 0;
+  let foes = [], shots = [], beams = [], booms = [], beamsC = [], craters = [], queue = [], bias = { x: 312, w: 300 };
+  const rnd = Math.random; const STATS = { shots: 0, hits: 0, leaks: 0 };
+  const isa = (f, t) => f.type.startsWith(t);   // family match: mk2 variants ('anvil2') share their base type's rules
+  const bDmg = b => b.def.dmg * (1 + CFG.lvl.dmg * Math.min(b.lvl, 2)) * P(b, 'dmg', 1), bRange = b => b.def.range * TIER[b.slot.tier] * (1 + CFG.lvl.range * Math.min(b.lvl, 2)) * P(b, 'range', 1);
+  const bCool = b => Math.round(P(b, 'cool', b.def.cool) * (b.kind === 'thaad' ? 1 - CFG.lvl.thaadReload * Math.min(b.lvl, 2) : 1));   // THAAD reloads faster per level
+  const bMuzzle = b => b.kind === 'flak' ? { x: b.slot.x - 3 + Math.cos(b.aim) * 14, y: b.slot.y - 9 + Math.sin(b.aim) * 14 } : ({ x: b.slot.x, y: b.slot.y - SPR[b.kind].length + 4 });
+  const upCost = b => Math.round(b.def.cost * CFG.econ.upgradeMult[Math.min(b.lvl, 2)]), sellVal = b => Math.round(b.paid * CFG.econ.sellRefund), repCost = b => Math.round(b.def.cost * CFG.econ.repairCost);
+  const batteries = () => SLOTS.filter(s => s.b).map(s => s.b);
+
+  // ---- waves -------------------------------------------------------------------
+  function composeWave(n) {
+    // fully driven by the bestiary: each threat's own from/count/elite decide the wave
+    const q = [], late = 1 + Math.max(0, n - CFG.wave.lateFrom) * CFG.wave.lateMult;
+    for (const [t, d] of Object.entries(TT)) {
+      if (!d.from || n < d.from) continue;
+      const k = d.count(n) * (d.elite ? 1 : late);
+      for (let i = 0; i < k; i++) q.push(t);
+    }
+    for (let i = q.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0;[q[i], q[j]] = [q[j], q[i]]; }
+    return q;
+  }
+  let snap = null, seen = {}, toast = null, nextBias = null;
+  const rollBias = () => nextBias = { x: 80 + rnd() * (W - 160), w: 140 + Math.min(340, (wave + 1) * 14) };
+  function startWave() {
+    snap = { cash, wave, cities: CITIES.map(c => c.hp), bats: SLOTS.map(s => s.b && { kind: s.b.kind, lvl: s.b.lvl, broken: s.b.broken, kills: s.b.kills, dmg: s.b.dmg, aim: s.b.aim, paid: s.b.paid, path: s.b.path }), seen: { ...seen } };
+    wave++; phase = 'wave'; selB = null;
+    queue = composeWave(wave);
+    bias = nextBias; toast = null;
+    gap = Math.max(CFG.wave.gapMin, CFG.wave.gapBase - wave * CFG.wave.gapPerWave); nextLaunch = 30;
+  }
+  let gap = 60, nextLaunch = 0;
+  function launch(type) {
+    const d = TT[type]; if (d.info && !seen[type]) { seen[type] = 1; toast = { txt: d.info, t: 360 }; } let tx, ty, tgt = null;
+    if (type.startsWith('wasp') && batteries().some(b => !b.broken)) {
+      const bs = batteries().filter(b => !b.broken); tgt = bs[(rnd() * bs.length) | 0]; tx = tgt.slot.x; ty = tgt.slot.y;
+    } else {
+      const alive = CITIES.filter(ct => ct.hp > 0); const ct = alive.length ? alive[(rnd() * alive.length) | 0] : CITIES[0];
+      tx = (ct.a + ct.z) / 2 + (rnd() - 0.5) * (ct.z - ct.a) * 1.3; ty = groundY(tx);
+    }
+    const x0 = cl(bias.x + (rnd() - 0.5) * bias.w, 6, W - 6), y0 = -14, T = d.T * (0.9 + rnd() * 0.2);
+    sfx(type); foes.push({ type, x: x0, y: y0, vx: (tx - x0) / T, vy: ((ty - y0) - 0.5 * G * T * T) / T, hp: d.hp, hpMax: d.hp, r: d.r, tgt, trail: [], dy: DEPLOY_Y, shed: 0, born: tick });
+  }
+  function spawnPips(f) {
+    const n = TT[f.type].pips;
+    for (let i = 0; i < n; i++)foes.push({ type: 'pip', x: f.x, y: f.y, vx: f.vx + (i - (n - 1) / 2) * 0.4, vy: f.vy * 0.9, hp: TT.pip.hp, r: TT.pip.r, trail: [], born: tick });
+    boom(f.x, f.y, 'deploy');
+  }
+  function retryWave() {
+    cash = snap.cash; wave = snap.wave; seen = { ...snap.seen }; toast = null; CITIES.forEach((c, i) => c.hp = snap.cities[i]); craters.length = 0;
+    SLOTS.forEach((s, i) => { const b = snap.bats[i]; s.b = b ? { ...b, def: BT[b.kind], slot: s, t: 20, charge: 0, burst: 0, burstT: 0, mag: 0, magT: 0, tgt: null } : null; });
+    foes = []; shots = []; beams = []; booms = []; queue = []; phase = 'build'; sel = null; selB = null; rollBias();
+  }
+  const boom = (x, y, k) => { booms.push({ x, y, a: 0, k }); if (k === 'city') shake = 12; };
+
+  // ---- sound (synth, no assets) ------------------------------------------------
+  let AC = null; const unmute = () => { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); AC.resume(); };
+  // wave: oscillator type, or 'sweep' = bandpass-filtered noise sliding f0→f1 (jet/missile screech). noise adds a hiss burst. dist = waveshaper crunch
+  const SFX = {
+    lug: ['sweep', 1800, 400, 1.1, 0.5, 0], needle: ['sweep', 5000, 1800, 0.5, 0.35, 0], hive: ['sawtooth', 2400, 700, 1.0, 0.1, 1],
+    anvil: ['sweep', 900, 200, 1.5, 0.6, 0], wasp: ['sawtooth', 3000, 2200, 0.8, 0.06, 1], ghost: ['sine', 2200, 900, 0.9, 0.06, 1], warden: ['sweep', 700, 120, 2.4, 0.8, 0],
+    pac: ['square', 900, 300, 0.15, 0.12, 1], thaad: ['sawtooth', 120, 500, 0.7, 0.3, 1], flak: ['square', 200, 60, 0.06, 0.15, 1], dew: ['sine', 2000, 3500, 0.3, 0.12, 0],
+    kill: ['sawtooth', 70, 18, 1.1, 0.5, 1, 1], fizzle: ['square', 400, 80, 0.08, 0.08, 1], city: ['sawtooth', 45, 12, 2.5, 1.0, 1, 1],
+  };
+  let SHAPER = null; const shaper = () => { if (SHAPER) return SHAPER; const c = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; c[i] = Math.tanh(x * 6); } SHAPER = AC.createWaveShaper(); SHAPER.curve = c; SHAPER.connect(AC.destination); return SHAPER; };
+  function noiseBuf(n) { const buf = AC.createBuffer(1, AC.sampleRate * n | 0, AC.sampleRate), ch = buf.getChannelData(0); for (let i = 0; i < ch.length; i++)ch[i] = rnd() * 2 - 1; return buf; }
+  function sfx(k) {
+    const d = SFX[k] || SFX[k.replace(/\d$/, '')];   // variants reuse their family's sound
+    if (!AC || !d) return;
+    const [w, f0, f1, dur, vol, noise, dist] = d, t = AC.currentTime, out = dist ? shaper() : AC.destination;
+    const g = AC.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); g.connect(out);
+    if (w === 'sweep') {
+      const src = AC.createBufferSource(), bp = AC.createBiquadFilter(); src.buffer = noiseBuf(dur); bp.type = 'bandpass'; bp.Q.value = 6;
+      bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + dur); src.connect(bp).connect(g); src.start(t); return;
+    }
+    const o = AC.createOscillator(); o.type = w; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur); o.connect(g); o.start(t); o.stop(t + dur);
+    if (!noise) return; const n = dur * (dist ? 0.9 : 0.5), src = AC.createBufferSource(), ng = AC.createGain(); src.buffer = noiseBuf(n);
+    if (dist) { const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(1200, t); lp.frequency.exponentialRampToValueAtTime(80, t + n); src.connect(lp).connect(ng); } else src.connect(ng);
+    ng.gain.setValueAtTime(vol * 0.6, t); ng.gain.exponentialRampToValueAtTime(0.001, t + n); ng.connect(out); src.start(t);
+  }
+
+  // ---- damage ------------------------------------------------------------------
+  function hit(f, dmg, type, src) {
+    if (f.dead) return; STATS.hits++;
+    if (isa(f, 'anvil') && type === 'kinetic' && !(src && src.kind === 'thaad')) { boom(f.x, f.y - 4, 'spark'); return; }
+    if (isa(f, 'wasp') && type === 'blast') { boom(f.x, f.y - 4, 'spark'); return; }
+    if (isa(f, 'warden')) f.flash = 6;
+    if (f.type === 'ghost') { f.dead = 1; boom(f.x, f.y, 'ghost'); return; }
+    dmg = Math.min(dmg, f.hp); f.hp -= dmg; if (src) src.dmg += dmg;
+    if (f.hp <= 0) { f.dead = 1; cash += TT[f.type].$; boom(f.x, f.y, type); sfx('kill'); if (src) src.kills++; }
+  }
+  function blast(x, y, dmg, src) {
+    boom(x, y, 'blast');
+    const r = src ? P(src, 'radius', CFG.blastRadius) : CFG.blastRadius;
+    for (const f of foes) if (!f.dead && Math.hypot(f.x - x, f.y - y) < r) hit(f, dmg, 'blast', src);
+  }
+
+  // ---- step --------------------------------------------------------------------
+  function aimLead(sx, sy, f, sp) {
+    const eta = Math.hypot(f.x - sx, f.y - sy) / sp;
+    return Math.atan2(f.y + f.vy * eta + 0.5 * G * eta * eta - sy, f.x + f.vx * eta - sx);
+  }
+  function pickTarget(b, m) {
+    const rg = bRange(b); let best = null, bp = -1e9;
+    for (const f of foes) {
+      if (f.dead) continue;
+      if (b.def.type === 'kinetic' && b.kind !== 'thaad' && (isa(f, 'anvil') || (isa(f, 'needle') && !P(b, 'seeker')))) continue;   // guns know what they can't hurt; THAAD hurts everything
+      if (b.def.type === 'blast' && isa(f, 'wasp')) continue;
+      if ((b.kind === 'thaad' || b.def.type === 'energy' || b.lvl >= 2) && f.type === 'ghost') continue;         // THAAD/DEW and max-level guns see through decoys
+      const d = Math.hypot(f.x - m.x, f.y - m.y); if (d > rg) continue;
+      let p = f.y; if (isa(f, 'hive') && f.y < f.dy) p += 80; if (isa(f, 'wasp')) p += 40;
+      if (b.kind === 'thaad') { p += f.hp * 40; if (isa(f, 'needle')) p += 400; if (f.lock) p -= 500; }   // THAAD: needles first, then the fattest target
+      if (p > bp) { bp = p; best = f; }
+    }
+    return best;
+  }
+  function step() {
+    tick++;
+    if (phase === 'wave') {
+      if (queue.length && --nextLaunch <= 0) { const salvo = wave >= 10 && rnd() < CFG.wave.salvoBase + wave * CFG.wave.salvoPerWave ? 2 + (wave >= 20 && rnd() < 0.5 ? 1 : 0) : 1; for (let i = 0; i < salvo && queue.length; i++)launch(queue.shift()); nextLaunch = gap * (0.5 + rnd()) * (salvo > 1 ? 1.6 : 1); }
+      if (!queue.length && !foes.length) {
+        phase = 'build'; rollBias(); const alive = CITIES.filter(ct => ct.hp > 0).length;
+        cash += alive * (CFG.econ.waveIncome + wave * CFG.econ.waveIncomePerWave); if (wave >= MAXWAVE) phase = 'win';
+      }
+    }
+    for (const f of foes) {
+      f.trail.push(f.x | 0, f.y | 0); if (f.trail.length > 70) f.trail.splice(0, 2);
+      if (isa(f, 'warden')) {
+        f.x += Math.sin(tick / 22) * 1.3; f.vy += G * 0.35;
+        const ht = f.type.replace('warden', 'hive');   // warden sheds hives, warden2 sheds hive2s
+        if (++f.shed > TT[f.type].shedEvery) { f.shed = 0; foes.push({ type: ht, x: f.x, y: f.y, vx: f.vx + (rnd() - 0.5) * 1.2, vy: f.vy * 0.5, hp: TT[ht].hp, r: TT[ht].r, trail: [], dy: f.y + 70, born: tick }); }
+      } else f.vy += G;
+      f.x += f.vx; f.y += f.vy;
+      if (isa(f, 'hive') && f.y >= f.dy) { f.dead = 1; spawnPips(f); continue; }
+      if (f.y >= groundY(f.x)) {
+        f.dead = 1; const gy = groundY(f.x);
+        const d = TT[f.type].dmg;
+        if (f.type === 'ghost') { boom(f.x, gy - 2, 'ghost'); continue; }
+        if (f.tgt) { if (!f.tgt.broken && Math.abs(f.x - f.tgt.slot.x) < 12) { f.tgt.broken = 1; f.tgt.charge = 0; shake = 9; } boom(f.x, gy - 2, 'ground'); continue; }
+        const ct = CITIES.find(ct => f.x >= ct.a - 4 && f.x <= ct.z + 4);
+        if (ct && ct.hp > 0) { STATS.leaks++; ct.hp = Math.max(0, ct.hp - d); craters.push({ x: f.x | 0, y: gy, born: tick }); boom(f.x, gy - 3, 'city'); sfx('city'); }
+        else boom(f.x, gy - 2, 'ground');
+      }
+      if (f.x < -30 || f.x > W + 30) f.dead = 1;
+      if (f.flash) f.flash--;
+    }
+    for (const b of batteries()) {
+      if (b.broken) continue;
+      const m = bMuzzle(b);
+      if (b.kind === 'dew' && b.charge > 0) {
+        if (--b.charge === 0) {
+          // volley: targets are picked at DISCHARGE, not charge start — a dead lock can't fizzle the shot.
+          // top-N priority targets get a beam each; extra beams cycle back onto the priority targets.
+          const N = b.def.beams[Math.min(b.lvl, 2)], picked = [];
+          while (picked.length < N) { const f = pickTarget(b, m); if (!f) break; picked.push(f); f.dead = 2; }   // temp-mark so the next pick differs
+          for (const f of picked) f.dead = 0;
+          if (picked.length) {
+            const oy = m.y - 4, rg = bRange(b) * 1.1;
+            for (let i = 0; i < N; i++) {
+              // each laser line extends through its target to full range, burning everything on it
+              const f = picked[i % picked.length], ox = m.x + (i - (N - 1) / 2) * 3;
+              const an = Math.atan2(f.y - oy, f.x - ox), dx = Math.cos(an) * rg, dy = Math.sin(an) * rg;
+              beams.push({ x0: ox, y0: oy, x1: ox + dx, y1: oy + dy, a: 0 });
+              for (const t of foes) {
+                if (t.dead || t.type === 'ghost') continue;
+                const u = cl(((t.x - ox) * dx + (t.y - oy) * dy) / (rg * rg), 0, 1);
+                if (Math.hypot(t.x - ox - dx * u, t.y - oy - dy * u) < t.r + 2) hit(t, bDmg(b), 'energy', b);
+              }
+            }
+            b.t = P(b, 'cool', b.def.cool); sfx('dew');
+          }
+          else b.t = 10;
+        }
+        continue;
+      }
+      if (b.kind === 'flak') {
+        const pv = { x: b.slot.x - 3, y: b.slot.y - 9 };
+        if (!b.tgt || b.tgt.dead || Math.hypot(b.tgt.x - pv.x, b.tgt.y - pv.y) > bRange(b)) b.tgt = pickTarget(b, m);   // sticky target
+        if (b.tgt) { const want = aimLead(pv.x, pv.y, b.tgt, b.def.spd); let d = want - b.aim; d = Math.atan2(Math.sin(d), Math.cos(d)); b.aim += cl(d * 0.3, -0.14, 0.14); }
+      }
+      if (b.burst > 0 && --b.burstT <= 0) { b.burst--; b.burstT = 4; if (b.kind === 'flak') fireFlak(b, m); else { const f = pickTarget(b, m); if (f) { const a = aimLead(m.x, m.y, f, b.def.spd); STATS.shots++; shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * b.def.spd, vy: Math.sin(a) * b.def.spd, tgt: f, dmg: bDmg(b), kind: 'thaad', src: b, trail: [] }); boom(m.x, m.y + 4, 'launch'); sfx('thaad'); } } }
+      if (b.kind === 'pac' && b.mag > 0 && --b.magT <= 0) { const f = pickTarget(b, m); if (f) { b.mag--; b.magT = 9; firePac(b, m, f); } continue; }
+      if (--b.t > 0) continue;
+      const f = pickTarget(b, m); if (!f) continue;
+      if (b.kind === 'dew') { b.charge = P(b, 'charge', 40); continue; }
+      b.t = bCool(b);
+      if (b.kind === 'flak') { b.burst = P(b, 'stream', 6) - 1; b.burstT = 4; fireFlak(b, m); continue; }
+      if (b.kind === 'pac') { b.mag = P(b, 'mag', b.def.mag) - 1; b.magT = 9; firePac(b, m, f); continue; }
+      if (b.kind === 'thaad' && P(b, 'burst', 1) > 1) { b.burst = 1; b.burstT = 12; }
+      const sp = b.def.spd, a = aimLead(m.x, m.y, f, sp);
+      STATS.shots++; shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, tgt: f, dmg: bDmg(b), kind: b.kind, src: b, trail: [] });
+      boom(m.x, m.y + 4, 'launch'); sfx(b.kind); if (b.kind === 'thaad') f.lock = 1;
+    }
+    function firePac(b, m, f) {
+      const sp = b.def.spd, a = aimLead(m.x, m.y, f, sp);
+      STATS.shots++; shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, tgt: f, dmg: bDmg(b), kind: 'pac', src: b, trail: [] });
+      boom(m.x, m.y + 4, 'launch'); sfx('pac');
+    }
+    function fireFlak(b, m) {
+      const f = b.tgt; if (!f || f.dead) return; m = bMuzzle(b);
+      const sp = b.def.spd, a = b.aim + (rnd() - 0.5) * 0.08, eta = Math.hypot(f.x - m.x, f.y - m.y) / sp;
+      shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, fuse: (eta + 4) | 0, dmg: bDmg(b), kind: 'flak', src: b, trail: [] });
+      boom(m.x, m.y, 'spark'); sfx('flak');
+    }
+    for (const s of shots) {
+      s.trail.push(s.x | 0, s.y | 0); if (s.trail.length > (s.kind === 'pac' ? 24 : s.kind === 'flak' ? 6 : 130)) s.trail.splice(0, 2);
+      s.x += s.vx; s.y += s.vy;
+      if (s.kind === 'flak') {
+        let near = null; for (const f of foes) if (!f.dead && Math.hypot(f.x - s.x, f.y - s.y) < 9) { near = f; break; }
+        if (near || --s.fuse <= 0) { s.dead = 1; blast(s.x, s.y, s.dmg, s.src); if (!near) sfx('fizzle'); }
+      } else {
+        if (!s.tgt.dead) { // homing: turn toward the lead point, rate-limited
+          const sp = Math.hypot(s.vx, s.vy), want = aimLead(s.x, s.y, s.tgt, sp), have = Math.atan2(s.vy, s.vx);
+          let d = want - have; d = Math.atan2(Math.sin(d), Math.cos(d)); const rate = s.kind === 'pac' ? 0.14 : 0.12;
+          const a = have + cl(d, -rate, rate); s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp;
+        }
+        if (s.tgt.dead) { s.dead = 1; const f = pickTarget({ def: BT[s.kind], kind: s.kind, lvl: s.src ? s.src.lvl : 0, path: s.src && s.src.path, slot: { tier: 'valley' } }, s); if (f) { s.dead = 0; s.tgt = f; } else { boom(s.x, s.y, 'spark'); sfx('fizzle'); } }
+        else if (Math.hypot(s.tgt.x - s.x, s.tgt.y - s.y) < s.tgt.r + 3) { s.dead = 1; hit(s.tgt, s.dmg, 'kinetic', s.src); }
+        else if (isa(s.tgt, 'needle') && s.kind !== 'thaad' && !(s.src && P(s.src, 'seeker')) && Math.hypot(s.tgt.x - s.x, s.tgt.y - s.y) < s.tgt.r + 12) { s.dead = 1; boom(s.x, s.y, 'spark'); sfx('fizzle'); }   // needle outruns PAC
+        else if (s.kind === 'pac' && (s.y < -5 || s.x < 0 || s.x > W)) { s.dead = 1; sfx('fizzle'); }
+      }
+      if (s.y < -40 || s.x < -40 || s.x > W + 40 || s.y > GY) s.dead = 1;
+    }
+    for (const e of booms) if (++e.a > (e.k === 'blast' ? 14 : e.k === 'ghost' ? 26 : 16)) e.dead = 1;
+    for (const e of beams) if (++e.a > 6) e.dead = 1;
+    foes = foes.filter(f => !f.dead); shots = shots.filter(s => !s.dead); booms = booms.filter(e => !e.dead); beams = beams.filter(e => !e.dead);
+    if (craters.length > 40) craters.splice(0, craters.length - 40);
+    if (phase !== 'over' && CITIES.every(ct => ct.hp <= 0)) phase = 'over';
+    if (shake > 0) shake--;
+  }
+
+  // ---- draw --------------------------------------------------------------------
+  const fx = v => (v * FINE) | 0;
+  function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(fx(x), fx(y), Math.max(1, fx(w)), Math.max(1, fx(h))); }
+  function dot(x, y, col) { g.fillStyle = col; g.fillRect(fx(x), fx(y), FINE, FINE); }
+  function sprite(img, x, y, ang, flame, sc) {
+    sc = sc || 2; g.save(); g.translate(fx(x), fx(y)); if (ang) g.rotate(ang);
+    g.drawImage(img, -img.width * sc / 2, -img.height * sc / 2, img.width * sc, img.height * sc);
+    if (flame) {
+      const f = tick >> 1, h = img.height * sc / 2;
+      for (let j = 0; j < 5; j++) {
+        const w = Math.max(1, flame - j + ((j + f) & 1));
+        for (let i = 0; i < w; i++) {
+          if (j > 2 && hash(i * 3 + j * 11 + (f >> 1) * 7, 1) < 0.45) continue;
+          g.fillStyle = j === 0 ? '#fff8e0' : j < 2 ? '#ffd98a' : j < 4 ? '#ff8a2b' : '#c25a10'; g.fillRect((-(w >> 1) + i) * 2, h + j * 2, 2, 2);
+        }
+      }
+    }
+    g.restore();
+  }
+  function disc(x, y, rad, pal, edgeDith) {
+    for (let yy = -rad; yy <= rad; yy++)for (let xx = -rad; xx <= rad; xx++) {
+      const d2 = xx * xx + yy * yy; if (d2 > rad * rad) continue;
+      const edge = d2 > (rad - 3) * (rad - 3);
+      if (edge && dith(x + xx, y + yy) > 0.55) continue;
+      dot(x + xx, y + yy, edge ? pal[2] : (d2 < 6 ? pal[0] : pal[1]));
+    }
+  }
+  function ring(x, y, r, col, fill) {
+    g.save(); g.globalAlpha = 0.16; g.fillStyle = fill || col; g.beginPath(); g.arc(fx(x), fx(y), r * FINE, 0, Math.PI * 2); g.fill(); g.restore();
+    g.fillStyle = col; for (let a = 0; a < 360; a += 1.5) { const t = a * Math.PI / 180; if ((a | 0) % 6 > 3) continue; g.fillRect(fx(x + Math.cos(t) * r) - 1, fx(y + Math.sin(t) * r) - 1, FINE + 1, FINE + 1); }
+  }
+  function text(s, x, y, col, size, align) { g.font = `bold ${size || 14}px ui-monospace,Menlo,monospace`; g.textAlign = align || 'left'; g.textBaseline = 'middle'; g.fillStyle = col; g.fillText(s, fx(x), fx(y)); }
+  function wrap(str, maxW, size) {
+    g.font = `bold ${size}px ui-monospace,Menlo,monospace`; const out = []; let line = '';
+    for (const w of str.split(' ')) { const t = line ? line + ' ' + w : w; if (g.measureText(t).width > fx(maxW) && line) { out.push(line); line = w; } else line = t; }
+    if (line) out.push(line); return out;
+  }
+  function button(x, y, w, h, label, sub, col, on) {
+    rect(x, y, w, h, on ? STL[3] : STL[1]); rect(x, y, w, 1, on ? YOU[2] : STL[3]); rect(x, y + h - 1, w, 1, STL[0]);
+    if (sub) { text(label, x + w / 2, y + h * 0.34, col || STL[7], 17, 'center'); text(sub, x + w / 2, y + h * 0.72, STL[5], 14, 'center'); }
+    else text(label, x + w / 2, y + h / 2, col || STL[7], 16, 'center');
+  }
+  const BOOM_PAL = {
+    ground: [YOU[4], OR[1], THEM[1]], city: [YOU[4], OR[1], THEM[1]], kinetic: [YOU[4], OR[1], OR[0]], energy: [CY[3], CY[2], CY[0]],
+    blast: [YOU[4], OR[2], OR[0]], deploy: ['#fff8e0', '#c9a6ff', '#6b3fa0'], spark: [YOU[4], YOU[2], YOU[1]], launch: [CLOUD[1], CLOUD[2], CLOUD[4]]
+  };
+  const UI = { btns: [], hit(x, y) { for (const b of this.btns) if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) return b; } };
+  function draw() {
+    UI.btns = [];
+    g.save(); if (shake) g.translate((rnd() - 0.5) * shake * FINE, (rnd() - 0.5) * shake * FINE);
+    g.drawImage(bg, 0, 0, FW, FH);
+    // deploy ceiling
+    for (let x = (tick >> 2) % 8; x < W; x += 8)dot(x, DEPLOY_Y, CLOUD[4]);
+    // craters / burning city
+    for (const cr of craters) {
+      const age = tick - cr.born;
+      for (let i = 0; i < 3; i++) { const h = ((age / 3 + i * 7) % 22) | 0; if (hash(cr.x + i, age >> 2) < 0.5) dot(cr.x + (i - 1) * 2 + ((hash(h, i) * 3) | 0) - 1, cr.y - 3 - h, h < 6 ? OR[1] : h < 12 ? ROCK[2] : STL[4]); }
+      dot(cr.x - 1, cr.y - 1, OR[0]); dot(cr.x, cr.y - 1, tick % 6 < 3 ? YOU[2] : OR[1]); dot(cr.x + 1, cr.y - 1, OR[0]);
+    }
+    // pads
+    for (const s of SLOTS) {
+      rect(s.x - 7, s.y - 1, 14, 1, STL[5]); rect(s.x - 7, s.y, 14, 2, STL[2]);
+      if (!s.b && sel && tick % 30 < 20) { rect(s.x - 8, s.y - 12, 2, 2, YOU[2]); rect(s.x + 6, s.y - 12, 2, 2, YOU[2]); rect(s.x - 8, s.y - 4, 2, 2, YOU[2]); rect(s.x + 6, s.y - 4, 2, 2, YOU[2]); }
+      if (s.b && s.b === selB) ring(s.x, bMuzzle(s.b).y, bRange(s.b), STL[7], s.b.def.col);
+      if (!s.b && sel && s === hoverSlot) g.drawImage(IMG[sel], fx(s.x) - IMG[sel].width, fx(s.y) - IMG[sel].height * 2 + 4, IMG[sel].width * 2, IMG[sel].height * 2);
+      if (!s.b && sel && s === hoverSlot) ring(s.x, s.y - 6, BT[sel].range * TIER[s.tier], YOU[3], BT[sel].col);
+    }
+    // batteries
+    for (const b of batteries()) {
+      const img = b.broken ? IMG[b.kind + '_dead'] : b.kind === 'pac' && b.t > 20 && b.mag === 0 ? IMG.pac_empty : b.kind === 'dew' && b.charge > 0 ? (b.charge < 12 && tick % 2 ? IMG.dew_hot : IMG.dew_chg) : b.kind === 'thaad' && b.t > 30 ? IMG.thaad_empty : IMG[b.kind];
+      g.drawImage(img, fx(b.slot.x) - img.width, fx(b.slot.y) - img.height * 2 + 4, img.width * 2, img.height * 2);
+      if (b.kind === 'flak') {
+        g.save(); g.translate(fx(b.slot.x - 3), fx(b.slot.y - 9)); g.rotate(b.aim);
+        const bc = b.broken ? '#3a3f4a' : BP.f, tc = b.broken ? '#3a3f4a' : BP.g;
+        for (const oy of [-5, 1]) { g.fillStyle = BP.k; g.fillRect(-7, oy - 1, 35, 6); g.fillStyle = bc; g.fillRect(-6, oy, 32, 4); g.fillStyle = tc; g.fillRect(20, oy, 6, 4); }
+        g.restore();
+        // turret hub on top so the barrels read as mounted
+        const hx = fx(b.slot.x - 3), hy = fx(b.slot.y - 9); g.fillStyle = BP.k; g.fillRect(hx - 7, hy - 7, 14, 14); g.fillStyle = b.broken ? '#3a3f4a' : BP.e; g.fillRect(hx - 5, hy - 5, 10, 10); g.fillStyle = b.broken ? '#565d6b' : BP.g; g.fillRect(hx - 3, hy - 3, 4, 4);
+      }
+      if (b.lvl) for (let i = 0; i < b.lvl; i++)rect(b.slot.x - 5 + i * 5, b.slot.y + 3, 4, 2, YOU[2]);
+      if (b.broken) { const h = (tick / 3 + b.slot.x) % 16 | 0; dot(b.slot.x + ((hash(h, 3) * 3) | 0) - 1, b.slot.y - 8 - h, h < 5 ? OR[1] : STL[4]); }
+    }
+    // foes
+    for (const f of foes) {
+      for (let i = 0; i < f.trail.length; i += 2) {
+        const age = (f.trail.length - i) / f.trail.length;
+        if (age > 0.4 && (i >> 1) % 2) continue; if (age > 0.7 && (i >> 1) % 3) continue;
+        dot(f.trail[i], f.trail[i + 1], age > 0.55 ? CLOUD[4] : age > 0.28 ? CLOUD[3] : THEM[3]);
+      }
+      let img = IMG[f.type];
+      if (isa(f, 'warden') && f.flash) img = IMG[f.type + '_hot'];
+      if (isa(f, 'hive') && (f.dy - f.y) < 40 && tick % 4 < 2) img = IMG[f.type + '_hot'];
+      if (isa(f, 'wasp') && f.tgt && tick % 8 < 4) img = IMG[f.type + '_lock'];
+      if (f.type === 'ghost' && tick % 7 === 0) continue;
+      sprite(img, f.x, f.y, Math.atan2(f.vy, f.vx) + Math.PI / 2, f.type === 'pip' ? 3 : isa(f, 'warden') ? 8 : 5);
+      if (isa(f, 'wasp') && f.tgt && !f.tgt.broken) { g.fillStyle = tick % 8 < 4 ? '#ff4d4d' : '#8e1420'; const n = 12; for (let i = 1; i < n; i++) { if (hash(i + tick >> 2, 5) < 0.4) continue; g.fillRect(fx(f.x + (f.tgt.slot.x - f.x) * i / n), fx(f.y + (f.tgt.slot.y - f.y) * i / n), FINE, FINE); } }
+      const hpM = f.hpMax || TT[f.type].hp;
+      if (hpM >= 5) { const w = isa(f, 'warden') ? 24 : 14, hp = f.hp / hpM; rect(f.x - w / 2, f.y - f.r - 8, w, 2, STL[0]); rect(f.x - w / 2, f.y - f.r - 8, w * hp, 2, THEM[2]); }
+    }
+    // shots
+    for (const s of shots) {
+      const pal = s.kind === 'flak' ? [OR[2], OR[1], OR[0]] : [YOU[4], YOU[3], YOU[2]];
+      for (let i = 0; i < s.trail.length; i += 2) {
+        const age = (s.trail.length - i) / s.trail.length, tx = s.trail[i], ty = s.trail[i + 1];
+        if (s.kind === 'thaad') {
+          if (age > 0.55) { if ((i >> 1) % 2) continue; rect(tx - 1, ty - 1, 2, 2, dith(tx, ty) > 0.5 ? CLOUD[3] : CLOUD[2]); }       // billowy smoke column
+          else if (age > 0.28) dot(tx, ty, (i >> 1) % 2 ? OR[0] : CLOUD[1]);                                            // embers cooling into smoke
+          else rect(tx, ty, 2, 1, age < 0.12 ? (tick + i) % 2 ? YOU[4] : '#fff8e0' : (i >> 1) % 2 ? OR[1] : YOU[3]);                // hot fire at the nozzle
+          continue;
+        }
+        if (age > 0.5 && (i >> 1) % 2) continue; if (s.kind === 'pac' && age > 0.75 && (i >> 1) % 3) continue; dot(tx, ty, age > 0.6 ? CLOUD[3] : age > 0.3 ? (s.kind === 'flak' ? pal[1] : CLOUD[1]) : pal[0]);
+      }
+      if (s.kind === 'flak') { g.save(); g.translate(fx(s.x), fx(s.y)); g.rotate(Math.atan2(s.vy, s.vx)); g.fillStyle = OR[2]; g.fillRect(-8, -1, 10, 2); g.fillStyle = YOU[4]; g.fillRect(-2, -1, 4, 2); g.restore(); }
+      else sprite(s.kind === 'thaad' ? IMG.thaadr : IMG.icept, s.x, s.y, Math.atan2(s.vy, s.vx) + Math.PI / 2, s.kind === 'thaad' ? 7 : 2, 2);
+    }
+    for (const e of beams) {
+      const n = Math.hypot(e.x1 - e.x0, e.y1 - e.y0) | 0;
+      for (let i = 0; i < n; i++) { const x = e.x0 + (e.x1 - e.x0) * i / n, y = e.y0 + (e.y1 - e.y0) * i / n; dot(x, y, e.a < 2 ? CY[3] : (dith(x | 0, y | 0) > 0.4 ? CY[2] : CY[1])); if (e.a < 3) dot(x + 1, y, CY[3]); }
+    }
+    for (const e of booms) {
+      if (e.k === 'spark') { for (let i = 0; i < 5; i++)dot(e.x + (hash(i, e.a) - 0.5) * e.a * 2, e.y + (hash(i + 9, e.a) - 0.5) * e.a * 2, i % 2 ? YOU[2] : YOU[4]); continue; }
+      if (e.k === 'ghost') {
+        const CP = ['#ff4d6d', '#ffd94a', '#7ceaff', '#b8f25e', '#c9a6ff', '#ff8a2b', '#fff8e0'];
+        for (let i = 0; i < 16; i++) {
+          const a = hash(i, 3) * 6.283, r = 1 + e.a * (0.5 + hash(i, 7) * 0.8);
+          const x = e.x + Math.cos(a) * r, y = e.y + Math.sin(a) * r * 0.7 + e.a * e.a * 0.03;   // burst out, then flutter down
+          if (hash(i, e.a >> 1) < 0.25) continue;                                   // twinkle
+          rect(x, y, hash(i, 13) > 0.5 ? 2 : 1, 1, CP[(hash(i, 11) * 7) | 0]);
+        }
+        continue;
+      }
+      if (e.k === 'launch') { for (let i = 0; i < 6; i++)dot(e.x + (i - 2.5) * e.a * 0.6, e.y - e.a * 0.3 * hash(i, 1), BOOM_PAL.launch[Math.min(2, (e.a / 6) | 0)]); continue; }
+      const st = Math.min(2, (e.a / 16 * 3) | 0), rad = (e.k === 'blast' ? [4, 8, 10] : e.k === 'city' ? [6, 12, 16] : [4, 8, 11])[st];
+      disc(e.x, e.y, rad, BOOM_PAL[e.k] || BOOM_PAL.kinetic);
+    }
+    // dead cities: blacked out, smouldering
+    for (const ct of CITIES) if (ct.hp <= 0) for (let y = 192; y < 254; y++)for (let x = ct.a; x < ct.z; x++)if (dith(x, y) < 0.55) dot(x, y, hash(x * 7 + y + (tick >> 3), 2) > 0.985 ? OR[0] : STL[0]);
+    // city hp bars
+    for (const ct of CITIES) { const w = ct.z - ct.a - 10, x = ct.a + 5, y = 186; rect(x - 1, y - 1, w + 2, 5, STL[0]); rect(x, y, w * ct.hp / CFG.cityHP, 3, ct.hp > 50 ? GRS[5] : ct.hp > 25 ? OR[1] : THEM[2]); }
+    g.restore();
+    // selected battery panel
+    if (selB) {
+      const b = selB, PW = 176, x = cl(b.slot.x - PW / 2, 2, W - PW - 2), y = cl(b.slot.y - 70, 2, GY - 60), pth = b.path && b.def.paths[b.path];
+      rect(x, y, PW, 48, STL[0]); rect(x, y, PW, 1, STL[3]);
+      text(`${b.def.name}${pth ? ' ' + pth.name : ''} L${b.lvl + 1} · ${b.slot.tier} · ${Math.round(bDmg(b) * 10) / 10} dmg${b.kind === 'dew' ? '×' + b.def.beams[Math.min(b.lvl, 2)] : ''} · ${bRange(b) | 0} rng`, x + PW / 2, y + 6, YOU[2], 12, 'center');
+      text(`${b.kills} INTERCEPTS · ${Math.round(b.dmg)} DMG`, x + PW / 2, y + 14, STL[6], 12, 'center');
+      if (b.broken) UI.btns.push({ x: x + 3, y: y + 32, w: PW - 6, h: 13, act: 'repair' }), button(x + 3, y + 32, PW - 6, 13, `REPAIR $${repCost(b)}`, null, cash >= repCost(b) ? OR[2] : THEM[2]);
+      else if (b.lvl < 2) {
+        text(b.kind === 'dew' ? `NEXT: ${b.def.beams[b.lvl + 1]} beams, +25% dmg, +10% rng` : b.kind === 'thaad' ? `NEXT: +25% dmg, +10% rng, faster reload` : b.lvl === 1 ? `NEXT: +25% dmg, +10% rng, sees GHOSTS` : `NEXT: +25% damage, +10% range`, x + PW / 2, y + 23, STL[7], 11, 'center');
+        UI.btns.push({ x: x + 3, y: y + 32, w: PW - 56, h: 13, act: 'up' }, { x: x + PW - 50, y: y + 32, w: 47, h: 13, act: 'sell' });
+        button(x + 3, y + 32, PW - 56, 13, `UPGRADE $${upCost(b)}`, null, cash >= upCost(b) ? GRS[6] : THEM[2]);
+        button(x + PW - 50, y + 32, 47, 13, `SELL $${sellVal(b)}`, null, OR[2]);
+      } else if (!b.path) {
+        const A = b.def.paths.A, B = b.def.paths.B, c = cash >= upCost(b);
+        text(`A ${A.name}: ${A.info}`, x + 4, y + 22, c ? STL[7] : STL[5], 11, 'left'); text(`B ${B.name}: ${B.info}`, x + 4, y + 29, c ? STL[7] : STL[5], 11, 'left');
+        UI.btns.push({ x: x + 3, y: y + 35, w: 58, h: 11, act: 'pathA' }, { x: x + 63, y: y + 35, w: 58, h: 11, act: 'pathB' }, { x: x + PW - 50, y: y + 35, w: 47, h: 11, act: 'sell' });
+        button(x + 3, y + 35, 58, 11, `A $${upCost(b)}`, null, c ? GRS[6] : THEM[2]); button(x + 63, y + 35, 58, 11, `B $${upCost(b)}`, null, c ? GRS[6] : THEM[2]);
+        button(x + PW - 50, y + 35, 47, 11, `SELL $${sellVal(b)}`, null, OR[2]);
+      } else {
+        text(pth.info, x + PW / 2, y + 23, STL[7], 11, 'center');
+        UI.btns.push({ x: x + PW - 50, y: y + 32, w: 47, h: 13, act: 'sell' });
+        button(x + 3, y + 32, PW - 56, 13, 'MAXED', null, STL[5]); button(x + PW - 50, y + 32, 47, 13, `SELL $${sellVal(b)}`, null, OR[2]);
+      }
+    }
+    // HUD bar
+    rect(0, GY, W, HUD, STL[0]); rect(0, GY, W, 1, STL[2]);
+    text(`$${cash}`, 6, GY + 8, YOU[2], 20); text(`WAVE ${wave}/${MAXWAVE}`, 6, GY + 19, STL[5], 13);
+    let bx = 96;
+    for (const k in BT) {
+      const d = BT[k]; UI.btns.push({ x: bx, y: GY + 2, w: 64, h: HUD - 4, act: 'sel', k });
+      button(bx, GY + 2, 64, HUD - 4, d.name, `$${d.cost}`, cash >= d.cost ? d.col : THEM[2], sel === k); bx += 67;
+    }
+    UI.btns.push({ x: W - 78, y: GY + 2, w: 75, h: HUD - 4, act: 'start' }, { x: W - 116, y: GY + 2, w: 34, h: HUD - 4, act: 'speed' });
+    button(W - 116, GY + 2, 34, HUD - 4, speed + '×', null, STL[6], speed !== 1);
+    if (phase === 'build') button(W - 78, GY + 2, 75, HUD - 4, wave ? 'NEXT ▶' : 'START ▶', null, YOU[3], tick % 40 < 20);
+    else button(W - 78, GY + 2, 75, HUD - 4, `${queue.length + foes.length} inbound`, null, THEM[3]);
+    if (phase === 'build' && wave < MAXWAVE) {
+      const dir = nextBias.x < W / 3 ? 'WEST' : nextBias.x > W * 2 / 3 ? 'EAST' : 'CENTER';
+      const nu = [...new Set(composeWave(wave + 1))].filter(t => TT[t].info && !seen[t]);
+      rect(0, 20, W, 14, 'rgba(10,12,20,0.7)');
+      text(`WAVE ${wave + 1} heavy from the ${dir}` + (nu.length ? `  ·  NEW THREAT: ${TT[nu[0]].info}` : ''), W / 2, 27, nu.length ? THEM[3] : STL[7], 14, 'center');
+    } else if (toast && toast.t > 0) { toast.t -= speed; rect(0, 20, W, 14, 'rgba(10,12,20,0.7)'); text('NEW THREAT · ' + toast.txt, W / 2, 27, THEM[3], 14, 'center'); }
+    if (sel) { const lines = wrap(BT[sel].info, W - 16, 14); rect(0, GY - 2 - lines.length * 9, W, lines.length * 9 + 1, 'rgba(10,12,20,0.75)'); lines.forEach((l, i) => text(l, W / 2, GY - lines.length * 9 + 3 + i * 9, STL[7], 14, 'center')); }
+    else if (!wave && phase === 'build') { const m = batteries().length ? 'Tap START when ready' : 'Pick a battery, place it on a pad'; text(m, W / 2, GY - 10, STL[7], 16, 'center'); }
+    if (phase === 'wave') { const txt = `heavy from the ${bias.x < W / 3 ? 'WEST' : bias.x > W * 2 / 3 ? 'EAST' : 'CENTER'}`; text(txt, W / 2, 8, THEM[3], 14, 'center'); }
+    if (phase === 'over' || phase === 'win') {
+      rect(0, 0, W, H, 'rgba(10,12,20,0.6)'); text(phase === 'win' ? 'DOME HELD' : 'CITIES LOST', W / 2, H / 2 - 12, phase === 'win' ? YOU[2] : THEM[2], 28, 'center'); if (phase === 'over') { UI.btns.push({ x: W / 2 - 110, y: H / 2 + 4, w: 100, h: 16, act: 'retry' }, { x: W / 2 + 10, y: H / 2 + 4, w: 100, h: 16, act: 'restart' }); button(W / 2 - 110, H / 2 + 4, 100, 16, `RETRY WAVE ${wave}`, null, YOU[2], true); button(W / 2 + 10, H / 2 + 4, 100, 16, 'RESTART', null, STL[7]); }
+      else text(`wave ${wave} · tap to restart`, W / 2, H / 2 + 12, STL[7], 13, 'center');
+      const tot = {}; for (const b of batteries()) { const t = tot[b.kind] || (tot[b.kind] = { n: 0, k: 0, d: 0 }); t.n++; t.k += b.kills; t.d += b.dmg; }
+      let yy = H / 2 + 30; for (const k in tot) text(`${BT[k].name} ×${tot[k].n}: ${tot[k].k} intercepts · ${Math.round(tot[k].d)} dmg`, W / 2, yy += 9, BT[k].col, 12, 'center');
+    }
+  }
+
+  // ---- input -------------------------------------------------------------------
+  let hoverSlot = null;
+  function toWorld(e) { const r = c.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+  const nearSlot = (x, y) => SLOTS.find(s => Math.abs(s.x - x) < 14 && y > s.y - 34 && y < s.y + 10);
+  c.addEventListener('pointermove', e => { const p = toWorld(e); hoverSlot = nearSlot(p.x, p.y) || null; });
+  c.addEventListener('pointerdown', e => {
+    e.preventDefault(); unmute(); const p = toWorld(e);
+    const ui = UI.hit(p.x, p.y);
+    if (phase === 'over' || phase === 'win') { if (ui && ui.act === 'retry' && snap) retryWave(); else if (!ui || ui.act === 'restart') location.reload(); return; }
+    if (ui) {
+      if (ui.act === 'sel') { sel = sel === ui.k ? null : ui.k; selB = null; }
+      else if (ui.act === 'start' && phase === 'build') { startWave(); }
+      else if (ui.act === 'speed') speed = ({ 0.5: 1, 1: 2, 2: 4, 4: 0.5 })[speed];
+      else if (ui.act === 'up' && selB.lvl < 2 && cash >= upCost(selB)) { cash -= upCost(selB); selB.paid += upCost(selB); selB.lvl++; }
+      else if ((ui.act === 'pathA' || ui.act === 'pathB') && !selB.path && cash >= upCost(selB)) { cash -= upCost(selB); selB.paid += upCost(selB); selB.path = ui.act.slice(-1); selB.lvl = 3; }
+      else if (ui.act === 'sell') { cash += sellVal(selB); selB.slot.b = null; selB = null; }
+      else if (ui.act === 'repair' && cash >= repCost(selB)) { cash -= repCost(selB); selB.broken = 0; }
+      return;
+    }
+    const s = nearSlot(p.x, p.y);
+    if (s && s.b) { selB = selB === s.b ? null : s.b; sel = null; return; }
+    if (s && !s.b && sel) {
+      const d = BT[sel]; if (cash < d.cost) return;
+      cash -= d.cost; s.b = { kind: sel, def: d, slot: s, lvl: 0, t: 20, broken: 0, charge: 0, burst: 0, burstT: 0, aim: -1.1, kills: 0, dmg: 0, mag: 0, magT: 0, paid: d.cost, path: null };
+      return;
+    }
+    selB = null;
+  });
+  c.style.touchAction = 'none';
+
+  // ---- one runnable check -------------------------------------------------------
+  (function check() {
+    let bad = 0;
+    for (const [n, rows] of Object.entries(SPR)) rows.forEach((r, i) => { if (r.length !== rows[0].length) { bad++; console.error(n, i); } });
+    const w = composeWave(19); if (!w.includes('warden') || !w.includes('lug')) bad++;
+    if (!composeWave(3).includes('ghost') || composeWave(2).includes('ghost')) bad++;
+    if (!composeWave(10).includes('hive') || composeWave(9).includes('hive')) bad++;
+    if (composeWave(20).filter(t => t === 'needle').length !== 9) bad++;   // needles stay a scarce elite, no late-wave multiplier
+    foes.push({ type: 'ghost', x: 100, y: 100, hp: 1, r: 7 });
+    const fake = (k, lvl) => pickTarget({ def: BT[k], kind: k, lvl: lvl || 0, path: null, slot: { tier: 'valley' } }, { x: 100, y: 110 });
+    if (!fake('pac') || !fake('flak') || fake('thaad') || fake('dew')) bad++;
+    if (fake('pac', 2) || fake('flak', 2)) bad++;                                // max-level PAC/FLAK ignore ghosts
+    foes.length = 0;
+    foes.push({ type: 'anvil', x: 100, y: 100, hp: 6, r: 8 }, { type: 'needle', x: 100, y: 104, hp: 1, r: 6 });
+    if (!fake('thaad') || fake('pac')) bad++;                                    // THAAD engages anvil+needle, PAC can't
+    if (fake('thaad').type !== 'needle') bad++;                                  // and snipes needles before anything fat
+    hit(foes[0], 5, 'kinetic', { kind: 'thaad', dmg: 0, kills: 0 }); if (foes[0].hp !== 1) bad++;   // THAAD pierces anvil armour
+    foes.length = 0;
+    const f = { type: 'anvil', hp: 6, x: 0, y: 0 }; hit(f, 5, 'kinetic'); if (f.hp !== 6) bad++; hit(f, 5, 'blast'); if (f.hp !== 1) bad++;
+    const a2 = { type: 'anvil2', hp: 15, x: 0, y: 0 }; hit(a2, 5, 'kinetic'); if (a2.hp !== 15) bad++; hit(a2, 5, 'blast'); if (a2.hp !== 10) bad++;   // mk2 inherits family armour rule
+    foes.push({ type: 'anvil2', x: 100, y: 100, hp: 15, r: 8 });
+    if (fake('pac') || !fake('thaad')) bad++;                                    // mk2 inherits family targeting rules
+    foes.length = 0;
+    if (!composeWave(13).includes('lug2') || composeWave(12).includes('lug2') || !composeWave(30).includes('warden2')) bad++;
+    if (!composeWave(22).includes('lug3') || composeWave(21).includes('lug3') || !composeWave(30).includes('warden3')) bad++;
+    for (const t of new Set(composeWave(30))) if (!TT[t] || !IMG[t]) bad++;      // every scheduled type has stats and a sprite
+    if (BT.dew.beams.join() !== '1,2,3') bad++;
+    foes.push({ type: 'lug', x: 100, y: 100, hp: 1, r: 7 }, { type: 'lug', x: 100, y: 120, hp: 1, r: 7 });
+    const p1 = fake('dew'); p1.dead = 2; const p2 = fake('dew'); p1.dead = 0;
+    if (!p1 || !p2 || p1 === p2) bad++;                                          // volley temp-mark yields distinct targets
+    foes.length = 0;
+    const c0 = cash, gh = { type: 'ghost', hp: 1, x: 0, y: 0 }; hit(gh, 5, 'kinetic'); if (!gh.dead || cash !== c0) bad++;   // ghosts pay nothing
+    const wd = { type: 'warden', hp: 120, x: 0, y: 0 }; hit(wd, 1, 'kinetic'); hit(wd, 6, 'energy'); if (wd.hp !== 113) bad++;   // no armour: every hit lands in full
+    booms.length = 0;
+    console.log(bad ? `GOLDEN DOME: ${bad} check(s) failed` : 'GOLDEN DOME: checks ok');
+  })();
+  rollBias(); let acc = 0; (function loop() { acc += speed; while (acc >= 1) { acc--; if (phase === 'wave' || phase === 'build') step(); } draw(); requestAnimationFrame(loop); })();
+  window.GD = { IMG, STATS, hit, blast, pickTarget, composeWave, TT, get shots() { return shots }, get foes() { return foes }, SLOTS, BT, CITIES, startWave, get state() { return { cash, wave, phase, tick, cities: CITIES.map(c => c.hp) } }, set cash(v) { cash = v }, build(i, k) { const s = SLOTS[i]; s.b = { kind: k, def: BT[k], slot: s, lvl: 0, t: 20, broken: 0, charge: 0, burst: 0, burstT: 0, aim: -1.1, kills: 0, dmg: 0, mag: 0, magT: 0, paid: BT[k].cost, path: null } }, set speed(v) { speed = v }, get speed() { return speed } };
+</script>
