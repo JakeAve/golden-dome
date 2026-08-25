@@ -32,7 +32,7 @@ Deno.test('12 slots, every slot sits on its flat', () => {
 Deno.test('sim sources are DOM-free', async () => {
   for (const f of ['cfg.js', 'rng.js']) {
     const src = await Deno.readTextFile(new URL(f, import.meta.url));
-    for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.'])
+    for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.', 'canvas', 'requestAnimationFrame'])
       assert(!src.includes(bad), `${f} contains ${bad}`);
   }
 });

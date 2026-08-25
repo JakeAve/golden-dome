@@ -81,6 +81,7 @@ const P = (b, k, d) => { const m = b.path && b.def.paths[b.path]; return m && k 
  * @property {(b: Battery) => number} repCost
  * @property {() => Battery[]} batteries
  * @property {(n: number) => string[]} composeWave
+ * @property {(n: number) => string[]} waveTypes
  * @property {(f: Foe, dmg: number, type: string, src?: any) => void} hit
  * @property {(x: number, y: number, dmg: number, src?: any) => void} blast
  * @property {(sx: number, sy: number, f: Foe, sp: number) => number} aimLead
@@ -145,14 +146,19 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
   const batteries = () => g.slots.filter(s => s.b).map(s => /** @type {Battery} */ (s.b));
 
   // ---- waves (v4 564–574)
-  /** @param {number} n @returns {string[]} */
-  function composeWave(n) {
+  /** rng-free type queue for wave n (unshuffled). @param {number} n @returns {string[]} */
+  function waveTypes(n) {
     const q = /** @type {string[]} */ ([]), late = 1 + Math.max(0, n - CFG.wave.lateFrom) * CFG.wave.lateMult;
     for (const [t, d] of Object.entries(TT)) {
       if (!d.from || n < d.from) continue;
       const k = /** @type {(n: number) => number} */ (d.count)(n) * (d.elite ? 1 : late);
       for (let i = 0; i < k; i++) q.push(t);
     }
+    return q;
+  }
+  /** @param {number} n @returns {string[]} */
+  function composeWave(n) {
+    const q = waveTypes(n);
     for (let i = q.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [q[i], q[j]] = [q[j], q[i]]; }
     return q;
   }
@@ -376,6 +382,7 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
   /** Step until a condition. Auto-starts waves while in 'build'. @param {{untilPhase?: string, untilWave?: number, maxTicks?: number}} [opts] */
   function run({ untilPhase, untilWave, maxTicks = 200000 } = {}) {
     for (let i = 0; i < maxTicks; i++) {
+      // wave 0: a fresh game already sits in 'build', so untilPhase:'build' means "until the *next* build phase" — don't return immediately.
       if (untilPhase && g.phase === untilPhase && !(untilPhase === 'build' && g.wave === 0)) return g;
       if (untilWave && g.wave >= untilWave && g.phase === 'build') return g;
       if (g.phase === 'over' || g.phase === 'win') return g;
@@ -388,6 +395,6 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
   rollBias();
   Object.assign(g, { startWave, retryWave, upgrade, choosePath, sell, repair, step, run, rollBias });
 
-  Object.assign(g, { bDmg, bRange, bCool, bMuzzle, upCost, sellVal, repCost, batteries, composeWave, hit, blast, aimLead, pickTarget, build });
+  Object.assign(g, { bDmg, bRange, bCool, bMuzzle, upCost, sellVal, repCost, batteries, composeWave, waveTypes, hit, blast, aimLead, pickTarget, build });
   return /** @type {Game} */ (/** @type {any} */ (g));
 }

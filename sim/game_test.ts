@@ -15,6 +15,11 @@ Deno.test('mk3 debuts: lug3 @22, warden3 @30', () => { const g = g0(); assert(g.
 Deno.test('every scheduled type has stats and a sprite', () => { for (const t of new Set(g0().composeWave(30))) { assert((TT as any)[t], t); assert((SPR as any)[t] || (SPR as any)[t.replace(/\d$/, '')], t); } });
 Deno.test('dew beams per level are 1,2,3', () => assertEquals(BT.dew.beams.join(), '1,2,3'));
 Deno.test('composeWave is seeded', () => assertEquals(createGame({ seed: 9 }).composeWave(15).join(), createGame({ seed: 9 }).composeWave(15).join()));
+Deno.test('waveTypes matches composeWave as a set, and is rng-free', () => {
+  const g = g0();
+  assertEquals(new Set(g.waveTypes(19)), new Set(g.composeWave(19)));
+  assertEquals(g.waveTypes(19).join(), g.waveTypes(19).join());
+});
 
 // ---- targeting (v4 check lines 1011–1031)
 const fake = (g: ReturnType<typeof createGame>, k: string, lvl = 0) => g.pickTarget({ def: (BT as any)[k], kind: k, lvl, path: null, slot: { tier: 'valley' } } as any, { x: 100, y: 110 });
@@ -70,7 +75,7 @@ Deno.test('cfg override', () => assertEquals(createGame({ seed: 1, cfg: { startC
 
 Deno.test('game.js is DOM-free', async () => {
   const src = await Deno.readTextFile(new URL('game.js', import.meta.url));
-  for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.']) assert(!src.includes(bad), bad);
+  for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.', 'canvas', 'requestAnimationFrame']) assert(!src.includes(bad), bad);
 });
 
 // ---- wave flow & gameplay
@@ -97,9 +102,10 @@ Deno.test('no defence: game is lost well before max wave', () => {
 });
 
 Deno.test('surviving wave pays income per living city', () => {
-  const g = createGame({ seed: 1, cfg: { cityHP: 100000 } }); g.run({ untilWave: 2 });
-  // after wave 1 completes phase returns to build; cash includes 2 cities × (35 + 1×4)
-  assert(g.cash >= CFG.startCash + 2 * (CFG.econ.waveIncome + CFG.econ.waveIncomePerWave), `${g.cash}`);
+  const noBounty = Object.fromEntries(Object.entries(CFG.threats).map(([k, d]) => [k, { ...d, $: 0 }]));
+  const g = createGame({ seed: 1, cfg: { startCash: 0, cityHP: 100000, threats: noBounty } });
+  g.run({ untilPhase: 'build', maxTicks: 5000 });
+  assertEquals(g.cash, 2 * (CFG.econ.waveIncome + 1 * CFG.econ.waveIncomePerWave));
 });
 
 Deno.test('determinism: same seed + same commands ⇒ identical outcome', () => {
@@ -144,7 +150,8 @@ Deno.test('upgrade / path / sell / repair rules', () => {
 
 Deno.test('retryWave restores the pre-wave snapshot', () => {
   const g = g0(); g.build(8, 'pac'); g.run({ untilPhase: 'over' });
-  assert(g.retryWave()); assertEquals(g.phase, 'build'); assertEquals(g.wave, g.snap.wave); assertEquals(g.cash, g.snap.cash);
+  const w = g.snap.wave, c = g.snap.cash; g.cash = -1; g.wave = -1;
+  assert(g.retryWave()); assertEquals(g.phase, 'build'); assertEquals(g.wave, w); assertEquals(g.cash, c);
   assertEquals(g.slots[8].b!.kind, 'pac'); assertEquals(g.foes.length, 0); assert(g.nextBias);
 });
 

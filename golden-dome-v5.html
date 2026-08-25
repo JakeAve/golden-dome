@@ -19,9 +19,11 @@
   }
 </style>
 <canvas id=c width=624 height=288></canvas>
+<div id=boot style="position:fixed;inset:0;display:grid;place-items:center;color:#c2ccd6;font:14px ui-monospace,Menlo,monospace;text-align:center;padding:1em">Loading… if this stays, serve over HTTP: <code>deno task serve</code> → http://localhost:4507/</div>
 <script type="module">
   import { createGame } from './sim/game.js';
   import { W, H, HUD, GY, FLATS, TP, BP, SPR, MK } from './sim/cfg.js';
+  document.getElementById('boot').remove();
   const seed = Number(new URLSearchParams(location.search).get('seed')) || (Date.now() % 1e9);
   const game = createGame({ seed });
   // 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt) edge to edge.
@@ -344,7 +346,7 @@
   for (const k of ['pac', 'thaad', 'flak', 'dew']) IMG[k + '_dead'] = render(SPR[k], BP, Object.fromEntries(Object.keys(BP).map(ch => [ch, ch === 'k' ? '#12141c' : '#3a3f4a'])));
 
   // ---- defs --------------------------------------------------------------------
-  const { slots: SLOTS, cities: CITIES, stats: STATS } = game;
+  const { slots: SLOTS, cities: CITIES } = game;
   const BT = game.cfg.batteries, TT = game.cfg.threats, MAXWAVE = game.cfg.maxWave;
   const { upCost, sellVal, repCost, bRange, bMuzzle, bDmg, batteries } = game;
   const TIER = game.cfg.tier, DEPLOY_Y = game.cfg.deployY;
@@ -562,9 +564,8 @@
     if (game.phase === 'build' && game.wave < MAXWAVE) {
       const dir = game.nextBias.x < W / 3 ? 'WEST' : game.nextBias.x > W * 2 / 3 ? 'EAST' : 'CENTER';
       if (nuCache.wave !== game.wave) {
-        // Preview only — mirrors composeWave's type-selection but skips its rnd()-driven shuffle so the preview can't perturb the sim's rng stream.
-        const n = game.wave + 1, late = 1 + Math.max(0, n - game.cfg.wave.lateFrom) * game.cfg.wave.lateMult, types = [];
-        for (const [t, d] of Object.entries(TT)) { if (d.from && n >= d.from && d.count(n) * (d.elite ? 1 : late) > 0) types.push(t); }
+        // Preview only — waveTypes is rng-free, so it can't perturb the sim's rng stream.
+        const types = [...new Set(game.waveTypes(game.wave + 1))];
         nuCache = { wave: game.wave, nu: types.filter(t => TT[t].info && !game.seen[t]) };
       }
       const nu = nuCache.nu;
@@ -619,8 +620,8 @@
     acc += speed;
     while (acc >= 1) { acc--; game.step(); }
     for (const e of game.events) dispatch(e); game.events.length = 0;
-    if (shake > 0) shake--;
-    if (toast && --toast.t <= 0) toast = null;
+    if (shake > 0) shake = Math.max(0, shake - speed);
+    if (toast && (toast.t -= speed) <= 0) toast = null;
     draw();
     requestAnimationFrame(loop);
   })();
