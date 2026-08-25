@@ -86,6 +86,15 @@ const P = (b, k, d) => { const m = b.path && b.def.paths[b.path]; return m && k 
  * @property {(sx: number, sy: number, f: Foe, sp: number) => number} aimLead
  * @property {(b: Battery, m: {x: number, y: number}) => Foe|null} pickTarget
  * @property {(i: number, kind: string) => boolean} build
+ * @property {() => boolean} startWave
+ * @property {() => boolean} retryWave
+ * @property {(i: number) => boolean} upgrade
+ * @property {(i: number, path: string) => boolean} choosePath
+ * @property {(i: number) => boolean} sell
+ * @property {(i: number) => boolean} repair
+ * @property {() => void} step
+ * @property {(opts?: {untilPhase?: string, untilWave?: number, maxTicks?: number}) => Game} run
+ * @property {() => void} rollBias
  */
 
 /**
@@ -105,7 +114,7 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
     slots: SLOT_DEFS.map(([x, y, tier]) => ({ x, y, tier, b: null })),
     /** @type {Foe[]} */
     foes: [], shots: /** @type {any[]} */ ([]), beams: /** @type {any[]} */ ([]), booms: /** @type {any[]} */ ([]), craters: /** @type {any[]} */ ([]), queue: /** @type {any[]} */ ([]),
-    bias: { x: 312, w: 300 }, nextBias: null, snap: null, seen: {},
+    bias: { x: 312, w: 300 }, nextBias: /** @type {{x: number, w: number}|null} */ (null), snap: /** @type {any} */ (null), seen: /** @type {any} */ ({}),
     stats: { shots: 0, hits: 0, leaks: 0 },
     /** presentation side-effects: {t:'sfx',k} | {t:'toast',txt} | {t:'shake',n}. Renderer drains. */
     events: /** @type {any[]} */ ([]),
@@ -197,7 +206,187 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
     return true;
   }
 
-  // TASK 4 INSERTS HERE
+  // ---- wave flow (v4 576–606)
+  let gap = 60, nextLaunch = 0;
+  const rollBias = () => g.nextBias = { x: 80 + rnd() * (W - 160), w: 140 + Math.min(340, (g.wave + 1) * 14) };
+  /** @returns {boolean} */
+  function startWave() {
+    if (g.phase !== 'build') return false;
+    g.snap = { cash: g.cash, wave: g.wave, cities: g.cities.map(c => c.hp), bats: g.slots.map(s => s.b && { kind: s.b.kind, lvl: s.b.lvl, broken: s.b.broken, kills: s.b.kills, dmg: s.b.dmg, aim: s.b.aim, paid: s.b.paid, path: s.b.path }), seen: { ...g.seen } };
+    g.wave++; g.phase = 'wave';
+    g.queue = composeWave(g.wave);
+    g.bias = /** @type {{x: number, w: number}} */ (g.nextBias);
+    gap = Math.max(CFG.wave.gapMin, CFG.wave.gapBase - g.wave * CFG.wave.gapPerWave); nextLaunch = 30;
+    return true;
+  }
+  /** @param {string} type */
+  function launch(type) {
+    const d = /** @type {any} */ (TT)[type]; if (d.info && !g.seen[type]) { g.seen[type] = 1; g.events.push({ t: 'toast', txt: d.info }); } let tx, ty, tgt = null;
+    if (type.startsWith('wasp') && batteries().some(b => !b.broken)) {
+      const bs = batteries().filter(b => !b.broken); tgt = bs[(rnd() * bs.length) | 0]; tx = tgt.slot.x; ty = tgt.slot.y;
+    } else {
+      const alive = g.cities.filter(ct => ct.hp > 0); const ct = alive.length ? alive[(rnd() * alive.length) | 0] : g.cities[0];
+      tx = (ct.a + ct.z) / 2 + (rnd() - 0.5) * (ct.z - ct.a) * 1.3; ty = groundY(tx);
+    }
+    const x0 = cl(g.bias.x + (rnd() - 0.5) * g.bias.w, 6, W - 6), y0 = -14, T = d.T * (0.9 + rnd() * 0.2);
+    sfx(type); g.foes.push({ type, x: x0, y: y0, vx: (tx - x0) / T, vy: ((ty - y0) - 0.5 * G * T * T) / T, hp: d.hp, hpMax: d.hp, r: d.r, tgt, trail: [], dy: DEPLOY_Y, shed: 0, born: g.tick });
+  }
+  /** @param {Foe} f */
+  function spawnPips(f) {
+    const n = /** @type {any} */ (TT)[f.type].pips;
+    for (let i = 0; i < n; i++) g.foes.push({ type: 'pip', x: f.x, y: f.y, vx: f.vx + (i - (n - 1) / 2) * 0.4, vy: f.vy * 0.9, hp: TT.pip.hp, r: TT.pip.r, trail: [], born: g.tick });
+    boom(f.x, f.y, 'deploy');
+  }
+  /** @returns {boolean} */
+  function retryWave() {
+    const snap = g.snap; if (g.phase !== 'over' || !snap) return false;
+    g.cash = snap.cash; g.wave = snap.wave; g.seen = { ...snap.seen }; g.cities.forEach((c, i) => c.hp = snap.cities[i]); g.craters.length = 0;
+    g.slots.forEach((s, i) => { const b = snap.bats[i]; s.b = b ? { ...b, def: /** @type {any} */ (BT)[b.kind], slot: s, t: 20, charge: 0, burst: 0, burstT: 0, mag: 0, magT: 0, tgt: null } : null; });
+    g.foes = []; g.shots = []; g.beams = []; g.booms = []; g.queue = []; g.phase = 'build'; rollBias();
+    return true;
+  }
+
+  // ---- remaining commands (v4 pointer handler 990–993)
+  /** @param {number} i */
+  const bat = i => g.slots[i] && g.slots[i].b;
+  /** @param {number} i @returns {boolean} */
+  function upgrade(i) { const b = bat(i); if (!b || b.lvl >= 2 || g.cash < upCost(b)) return false; const c = upCost(b); g.cash -= c; b.paid += c; b.lvl++; return true; }
+  /** @param {number} i @param {string} path @returns {boolean} */
+  function choosePath(i, path) { const b = bat(i); if (!b || b.lvl !== 2 || b.path || !(path in b.def.paths) || g.cash < upCost(b)) return false; const c = upCost(b); g.cash -= c; b.paid += c; b.path = path; b.lvl = 3; return true; }
+  /** @param {number} i @returns {boolean} */
+  function sell(i) { const b = bat(i); if (!b) return false; g.cash += sellVal(b); g.slots[i].b = null; return true; }
+  /** @param {number} i @returns {boolean} */
+  function repair(i) { const b = bat(i); if (!b || !b.broken || g.cash < repCost(b)) return false; g.cash -= repCost(b); b.broken = 0; return true; }
+
+  // ---- step (v4 669–782)
+  /** @param {Battery} b @param {{x: number, y: number}} m @param {Foe} f */
+  function firePac(b, m, f) {
+    const sp = b.def.spd, a = aimLead(m.x, m.y, f, sp);
+    g.stats.shots++; g.shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, tgt: f, dmg: bDmg(b), kind: 'pac', src: b, trail: [] });
+    boom(m.x, m.y + 4, 'launch'); sfx('pac');
+  }
+  /** @param {Battery} b @param {{x: number, y: number}} m */
+  function fireFlak(b, m) {
+    const f = b.tgt; if (!f || f.dead) return; m = bMuzzle(b);
+    const sp = b.def.spd, a = b.aim + (rnd() - 0.5) * 0.08, eta = Math.hypot(f.x - m.x, f.y - m.y) / sp;
+    g.shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, fuse: (eta + 4) | 0, dmg: bDmg(b), kind: 'flak', src: b, trail: [] });
+    boom(m.x, m.y, 'spark'); sfx('flak');
+  }
+  function step() {
+    if (g.phase !== 'wave' && g.phase !== 'build') return;
+    g.tick++; const tick = g.tick;
+    if (g.phase === 'wave') {
+      if (g.queue.length && --nextLaunch <= 0) { const salvo = g.wave >= 10 && rnd() < CFG.wave.salvoBase + g.wave * CFG.wave.salvoPerWave ? 2 + (g.wave >= 20 && rnd() < 0.5 ? 1 : 0) : 1; for (let i = 0; i < salvo && g.queue.length; i++) launch(/** @type {string} */ (g.queue.shift())); nextLaunch = gap * (0.5 + rnd()) * (salvo > 1 ? 1.6 : 1); }
+      if (!g.queue.length && !g.foes.length) {
+        g.phase = 'build'; rollBias(); const alive = g.cities.filter(ct => ct.hp > 0).length;
+        g.cash += alive * (CFG.econ.waveIncome + g.wave * CFG.econ.waveIncomePerWave); if (g.wave >= MAXWAVE) g.phase = 'win';
+      }
+    }
+    for (const f of g.foes) {
+      f.trail.push(f.x | 0, f.y | 0); if (f.trail.length > 70) f.trail.splice(0, 2);
+      if (isa(f, 'warden')) {
+        f.x += Math.sin(tick / 22) * 1.3; f.vy += G * 0.35;
+        const ht = f.type.replace('warden', 'hive');
+        if (++/** @type {{shed: number}} */ (f).shed > /** @type {any} */ (TT)[f.type].shedEvery) { f.shed = 0; g.foes.push({ type: ht, x: f.x, y: f.y, vx: f.vx + (rnd() - 0.5) * 1.2, vy: f.vy * 0.5, hp: /** @type {any} */ (TT)[ht].hp, r: /** @type {any} */ (TT)[ht].r, trail: [], dy: f.y + 70, born: tick }); }
+      } else f.vy += G;
+      f.x += f.vx; f.y += f.vy;
+      if (isa(f, 'hive') && f.y >= /** @type {number} */ (f.dy)) { f.dead = 1; spawnPips(f); continue; }
+      if (f.y >= groundY(f.x)) {
+        f.dead = 1; const gy = groundY(f.x);
+        const d = /** @type {any} */ (TT)[f.type].dmg;
+        if (f.type === 'ghost') { boom(f.x, gy - 2, 'ghost'); continue; }
+        if (f.tgt) { if (!f.tgt.broken && Math.abs(f.x - f.tgt.slot.x) < 12) { f.tgt.broken = 1; f.tgt.charge = 0; shake(9); } boom(f.x, gy - 2, 'ground'); continue; }
+        const ct = g.cities.find(ct => f.x >= ct.a - 4 && f.x <= ct.z + 4);
+        if (ct && ct.hp > 0) { g.stats.leaks++; ct.hp = Math.max(0, ct.hp - d); g.craters.push({ x: f.x | 0, y: gy, born: tick }); boom(f.x, gy - 3, 'city'); sfx('city'); }
+        else boom(f.x, gy - 2, 'ground');
+      }
+      if (f.x < -30 || f.x > W + 30) f.dead = 1;
+      if (f.flash) f.flash--;
+    }
+    for (const b of batteries()) {
+      if (b.broken) continue;
+      const m = bMuzzle(b);
+      if (b.kind === 'dew' && b.charge > 0) {
+        if (--b.charge === 0) {
+          const N = b.def.beams[Math.min(b.lvl, 2)], picked = /** @type {Foe[]} */ ([]);
+          while (picked.length < N) { const f = pickTarget(b, m); if (!f) break; picked.push(f); f.dead = 2; }
+          for (const f of picked) f.dead = 0;
+          if (picked.length) {
+            const oy = m.y - 4, rg = bRange(b) * 1.1;
+            for (let i = 0; i < N; i++) {
+              const f = picked[i % picked.length], ox = m.x + (i - (N - 1) / 2) * 3;
+              const an = Math.atan2(f.y - oy, f.x - ox), dx = Math.cos(an) * rg, dy = Math.sin(an) * rg;
+              g.beams.push({ x0: ox, y0: oy, x1: ox + dx, y1: oy + dy, a: 0 });
+              for (const t of g.foes) {
+                if (t.dead || t.type === 'ghost') continue;
+                const u = cl(((t.x - ox) * dx + (t.y - oy) * dy) / (rg * rg), 0, 1);
+                if (Math.hypot(t.x - ox - dx * u, t.y - oy - dy * u) < t.r + 2) hit(t, bDmg(b), 'energy', b);
+              }
+            }
+            b.t = P(b, 'cool', b.def.cool); sfx('dew');
+          }
+          else b.t = 10;
+        }
+        continue;
+      }
+      if (b.kind === 'flak') {
+        const pv = { x: b.slot.x - 3, y: b.slot.y - 9 };
+        if (!b.tgt || b.tgt.dead || Math.hypot(b.tgt.x - pv.x, b.tgt.y - pv.y) > bRange(b)) b.tgt = pickTarget(b, m);
+        if (b.tgt) { const want = aimLead(pv.x, pv.y, b.tgt, b.def.spd); let d = want - b.aim; d = Math.atan2(Math.sin(d), Math.cos(d)); b.aim += cl(d * 0.3, -0.14, 0.14); }
+      }
+      if (b.burst > 0 && --b.burstT <= 0) { b.burst--; b.burstT = 4; if (b.kind === 'flak') fireFlak(b, m); else { const f = pickTarget(b, m); if (f) { const a = aimLead(m.x, m.y, f, b.def.spd); g.stats.shots++; g.shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * b.def.spd, vy: Math.sin(a) * b.def.spd, tgt: f, dmg: bDmg(b), kind: 'thaad', src: b, trail: [] }); boom(m.x, m.y + 4, 'launch'); sfx('thaad'); } } }
+      if (b.kind === 'pac' && b.mag > 0 && --b.magT <= 0) { const f = pickTarget(b, m); if (f) { b.mag--; b.magT = 9; firePac(b, m, f); } continue; }
+      if (--b.t > 0) continue;
+      const f = pickTarget(b, m); if (!f) continue;
+      if (b.kind === 'dew') { b.charge = P(b, 'charge', 40); continue; }
+      b.t = bCool(b);
+      if (b.kind === 'flak') { b.burst = P(b, 'stream', 6) - 1; b.burstT = 4; fireFlak(b, m); continue; }
+      if (b.kind === 'pac') { b.mag = P(b, 'mag', b.def.mag) - 1; b.magT = 9; firePac(b, m, f); continue; }
+      if (b.kind === 'thaad' && P(b, 'burst', 1) > 1) { b.burst = 1; b.burstT = 12; }
+      const sp = b.def.spd, a = aimLead(m.x, m.y, f, sp);
+      g.stats.shots++; g.shots.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, tgt: f, dmg: bDmg(b), kind: b.kind, src: b, trail: [] });
+      boom(m.x, m.y + 4, 'launch'); sfx(b.kind); if (b.kind === 'thaad') f.lock = 1;
+    }
+    for (const s of g.shots) {
+      s.trail.push(s.x | 0, s.y | 0); if (s.trail.length > (s.kind === 'pac' ? 24 : s.kind === 'flak' ? 6 : 130)) s.trail.splice(0, 2);
+      s.x += s.vx; s.y += s.vy;
+      if (s.kind === 'flak') {
+        let near = null; for (const f of g.foes) if (!f.dead && Math.hypot(f.x - s.x, f.y - s.y) < 9) { near = f; break; }
+        if (near || --s.fuse <= 0) { s.dead = 1; blast(s.x, s.y, s.dmg, s.src); if (!near) sfx('fizzle'); }
+      } else {
+        if (!s.tgt.dead) {
+          const sp = Math.hypot(s.vx, s.vy), want = aimLead(s.x, s.y, s.tgt, sp), have = Math.atan2(s.vy, s.vx);
+          let d = want - have; d = Math.atan2(Math.sin(d), Math.cos(d)); const rate = s.kind === 'pac' ? 0.14 : 0.12;
+          const a = have + cl(d, -rate, rate); s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp;
+        }
+        if (s.tgt.dead) { s.dead = 1; const f = pickTarget(/** @type {any} */ ({ def: /** @type {any} */ (BT)[s.kind], kind: s.kind, lvl: s.src ? s.src.lvl : 0, path: s.src && s.src.path, slot: { tier: 'valley' } }), s); if (f) { s.dead = 0; s.tgt = f; } else { boom(s.x, s.y, 'spark'); sfx('fizzle'); } }
+        else if (Math.hypot(s.tgt.x - s.x, s.tgt.y - s.y) < s.tgt.r + 3) { s.dead = 1; hit(s.tgt, s.dmg, 'kinetic', s.src); }
+        else if (isa(s.tgt, 'needle') && s.kind !== 'thaad' && !(s.src && P(s.src, 'seeker')) && Math.hypot(s.tgt.x - s.x, s.tgt.y - s.y) < s.tgt.r + 12) { s.dead = 1; boom(s.x, s.y, 'spark'); sfx('fizzle'); }
+        else if (s.kind === 'pac' && (s.y < -5 || s.x < 0 || s.x > W)) { s.dead = 1; sfx('fizzle'); }
+      }
+      if (s.y < -40 || s.x < -40 || s.x > W + 40 || s.y > GY) s.dead = 1;
+    }
+    for (const e of g.booms) if (++e.a > (e.k === 'blast' ? 14 : e.k === 'ghost' ? 26 : 16)) e.dead = 1;
+    for (const e of g.beams) if (++e.a > 6) e.dead = 1;
+    g.foes = g.foes.filter(f => !f.dead); g.shots = g.shots.filter(s => !s.dead); g.booms = g.booms.filter(e => !e.dead); g.beams = g.beams.filter(e => !e.dead);
+    if (g.craters.length > 40) g.craters.splice(0, g.craters.length - 40);
+    if (g.phase !== 'over' && g.cities.every(ct => ct.hp <= 0)) g.phase = 'over';
+  }
+
+  /** Step until a condition. Auto-starts waves while in 'build'. @param {{untilPhase?: string, untilWave?: number, maxTicks?: number}} [opts] */
+  function run({ untilPhase, untilWave, maxTicks = 200000 } = {}) {
+    for (let i = 0; i < maxTicks; i++) {
+      if (untilPhase && g.phase === untilPhase && !(untilPhase === 'build' && g.wave === 0)) return g;
+      if (untilWave && g.wave >= untilWave && g.phase === 'build') return g;
+      if (g.phase === 'over' || g.phase === 'win') return g;
+      if (g.phase === 'build') startWave();
+      step();
+    }
+    return g;
+  }
+
+  rollBias();
+  Object.assign(g, { startWave, retryWave, upgrade, choosePath, sell, repair, step, run, rollBias });
 
   Object.assign(g, { bDmg, bRange, bCool, bMuzzle, upCost, sellVal, repCost, batteries, composeWave, hit, blast, aimLead, pickTarget, build });
   return /** @type {Game} */ (/** @type {any} */ (g));

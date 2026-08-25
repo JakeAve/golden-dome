@@ -72,3 +72,84 @@ Deno.test('game.js is DOM-free', async () => {
   const src = await Deno.readTextFile(new URL('game.js', import.meta.url));
   for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.']) assert(!src.includes(bad), bad);
 });
+
+// ---- wave flow & gameplay
+Deno.test('startWave only from build; increments wave, sets queue', () => {
+  const g = g0(); assert(g.nextBias);
+  assert(g.startWave()); assertEquals(g.wave, 1); assertEquals(g.phase, 'wave'); assert(g.queue.length > 0);
+  assert(!g.startWave()); assertEquals(g.wave, 1);
+});
+
+Deno.test('step is a no-op outside build/wave', () => {
+  const g = g0(); g.phase = 'over'; const t = g.tick; g.step(); assertEquals(g.tick, t);
+});
+
+Deno.test('no defence: wave 1 leaks and city takes damage', () => {
+  const g = g0(); g.run({ untilPhase: 'build', maxTicks: 5000 });
+  assertEquals(g.wave, 1); assert(g.stats.leaks > 0); assert(g.cities.some(c => c.hp < CFG.cityHP));
+  assert(g.foes.length === 0 && g.queue.length === 0);
+});
+
+Deno.test('no defence: game is lost well before max wave', () => {
+  const g = g0(); g.run({ untilPhase: 'over' });
+  assertEquals(g.phase, 'over'); assert(g.wave < CFG.maxWave, `lost at wave ${g.wave}`);
+  assert(g.cities.every(c => c.hp === 0));
+});
+
+Deno.test('surviving wave pays income per living city', () => {
+  const g = createGame({ seed: 1, cfg: { cityHP: 100000 } }); g.run({ untilWave: 2 });
+  // after wave 1 completes phase returns to build; cash includes 2 cities × (35 + 1×4)
+  assert(g.cash >= CFG.startCash + 2 * (CFG.econ.waveIncome + CFG.econ.waveIncomePerWave), `${g.cash}`);
+});
+
+Deno.test('determinism: same seed + same commands ⇒ identical outcome', () => {
+  const play = () => { const g = createGame({ seed: 123 }); g.build(8, 'pac'); g.build(9, 'pac'); g.build(4, 'flak'); g.run({ untilWave: 6 }); return g; };
+  const a = play(), b = play();
+  assertEquals(a.tick, b.tick); assertEquals(a.stats, b.stats); assertEquals(a.cash, b.cash); assertEquals(a.cities.map(c => c.hp), b.cities.map(c => c.hp));
+});
+
+Deno.test('different seeds diverge', () => {
+  const play = (s: number) => { const g = createGame({ seed: s }); g.build(8, 'pac'); g.run({ untilWave: 4 }); return g.stats.shots + ':' + g.cash; };
+  assertNotEquals(play(1), play(2));
+});
+
+Deno.test('sanity across seeds: cash finite and non-negative, phases progress', () => {
+  for (let s = 1; s <= 5; s++) {
+    const g = createGame({ seed: s }); g.build(8, 'pac'); g.build(9, 'pac'); g.build(4, 'flak');
+    g.run({ untilWave: 12, maxTicks: 100000 });
+    assert(Number.isFinite(g.cash) && g.cash >= 0, `seed ${s} cash ${g.cash}`);
+    assert(g.wave >= 12 || g.phase === 'over', `seed ${s} stuck at wave ${g.wave} phase ${g.phase}`);
+    for (const c of g.cities) assert(c.hp >= 0 && c.hp <= CFG.cityHP);
+  }
+});
+
+Deno.test('reference loadout holds the dome to max wave', () => {
+  // ponytail: single seed, single loadout — bench.ts covers the distribution
+  const g = createGame({ seed: 7, cfg: { startCash: 20000 } });
+  g.build(8, 'thaad'); g.build(9, 'thaad'); g.build(10, 'thaad'); g.build(11, 'thaad'); g.build(4, 'dew'); g.build(6, 'dew'); g.build(5, 'flak'); g.build(7, 'flak');
+  for (let i = 0; i < 12; i++) if (g.slots[i].b) { g.upgrade(i); g.upgrade(i); g.choosePath(i, 'A'); }
+  g.run({ untilPhase: 'win' });
+  assertEquals(g.phase, 'win', `ended ${g.phase} at wave ${g.wave}`);
+});
+
+Deno.test('upgrade / path / sell / repair rules', () => {
+  const g = createGame({ seed: 1, cfg: { startCash: 5000 } }); g.build(8, 'pac'); const b = g.slots[8].b!;
+  assert(!g.choosePath(8, 'A'));                          // needs lvl 2 first
+  assert(g.upgrade(8)); assert(g.upgrade(8)); assert(!g.upgrade(8)); assertEquals(b.lvl, 2);
+  assert(!g.choosePath(8, 'C')); assert(g.choosePath(8, 'A')); assertEquals(b.lvl, 3); assert(!g.choosePath(8, 'B'));
+  assertEquals(b.paid, BT.pac.cost + Math.round(BT.pac.cost * 0.8) + Math.round(BT.pac.cost * 1.6) + Math.round(BT.pac.cost * 2));
+  assert(!g.repair(8)); b.broken = 1; const c = g.cash; assert(g.repair(8)); assertEquals(g.cash, c - Math.round(BT.pac.cost * 0.4)); assertEquals(b.broken, 0);
+  const c2 = g.cash; assert(g.sell(8)); assertEquals(g.cash, c2 + Math.round(b.paid * 0.7)); assertEquals(g.slots[8].b, null); assert(!g.sell(8));
+});
+
+Deno.test('retryWave restores the pre-wave snapshot', () => {
+  const g = g0(); g.build(8, 'pac'); g.run({ untilPhase: 'over' });
+  assert(g.retryWave()); assertEquals(g.phase, 'build'); assertEquals(g.wave, g.snap.wave); assertEquals(g.cash, g.snap.cash);
+  assertEquals(g.slots[8].b!.kind, 'pac'); assertEquals(g.foes.length, 0); assert(g.nextBias);
+});
+
+Deno.test('first sighting of a threat emits a toast event, once', () => {
+  const g = g0(); g.run({ untilPhase: 'build', maxTicks: 5000 });
+  const toasts = g.events.filter(e => e.t === 'toast' && e.txt === TT.lug.info);
+  assertEquals(toasts.length, 1); assert(g.seen.lug);
+});
