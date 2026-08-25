@@ -1,10 +1,10 @@
 {
   "tasks": {
     "check": "deno check sim/*.js sim/*.ts",
-    "test": "deno task check && deno test sim/",
+    "test": "deno task check && deno test --allow-read=sim sim/",
     "bench": "deno run sim/bench.ts",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server ."
   },
-  "compilerOptions": { "checkJs": true, "lib": ["deno.ns", "esnext"] },
+  "compilerOptions": { "checkJs": true, "lib": ["deno.ns", "dom", "esnext"] },
   "fmt": { "lineWidth": 200, "singleQuote": true }
 }

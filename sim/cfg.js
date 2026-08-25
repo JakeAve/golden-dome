@@ -1,0 +1,216 @@
+// sim/cfg.js — every tuning number, sprite row and terrain point. Pure data, no logic beyond groundY.
+
+export const W = 624, H = 288, HUD = 26, GY = H - HUD;
+
+/** @param {number} v @param {number} a @param {number} z */
+const cl = (v, a, z) => v < a ? a : v > z ? z : v;
+
+// ---- terrain profile (v4 lines 58–66)
+export const FLATS = [
+    { x0: -4, x1: 104, y: 142 },   // left high mesa
+    { x0: 104, x1: 166, y: 200 },   // left shelf
+    { x0: 166, x1: 228, y: 252 },   // left valley lip (buildable, level with the city)
+    { x0: 228, x1: 400, y: 252 },   // city floor
+    { x0: 400, x1: 462, y: 252 },   // right valley lip (buildable, level with the city)
+    { x0: 462, x1: 520, y: 194 },   // right shelf
+    { x0: 520, x1: 628, y: 152 },   // right mesa
+];
+const TOP = new Int16Array(W);
+for (let x = 0; x < W; x++) { let y = 250; for (const f of FLATS) if (x >= f.x0 && x < f.x1) y = f.y; TOP[x] = y; }
+/** @param {number} x */
+export const groundY = x => TOP[cl(x | 0, 0, W - 1)];
+
+// ---- battery pads and cities (v4 lines 545–547, 550)
+/** @type {[number, number, 'peak'|'ridge'|'valley'][]} */
+export const SLOT_DEFS = [[30, 142, 'peak'], [78, 142, 'peak'], [546, 152, 'peak'], [594, 152, 'peak'],
+  [122, 200, 'ridge'], [150, 200, 'ridge'], [478, 194, 'ridge'], [506, 194, 'ridge'],
+  [184, 252, 'valley'], [212, 252, 'valley'], [416, 252, 'valley'], [444, 252, 'valley']];
+export const CITY_DEFS = [{ a: 230, z: 308 }, { a: 318, z: 398 }];
+
+// ---- sprites (v4 lines 336–364 for TP/BP/SPR, 374–387 for MK)
+export const TP = {
+    k: '#12141c', '1': '#2f3d1c', '2': '#5a7028', '3': '#8ba33c', '4': '#b8cf5e',
+    '5': '#8a99ab', '6': '#c2ccd6', '7': '#e6edf3', '8': '#d94040', '9': '#8e1420',
+    a: '#3a1f5c', b: '#6b3fa0', c: '#9b6ae0', d: '#c9a6ff', e: '#2c3440', f: '#586373', g: '#9aa6b2', i: '#c9902a',
+    j: '#1a1508', l: '#ffd94a', m: '#b8912a', n: '#0a7f9e', o: '#00c8ef', p: '#7ceaff', q: '#c9f6ff',
+    r: '#16171f', s: '#2a2c38', t: '#ff8a2b', u: '#ffd98a', E: '#ff4d4d', W: '#fff8e0', A: '#ffc94d', C: '#7ceaff'
+};
+export const BP = {
+    k: '#12141c', '1': '#3a3f4a', '2': '#565d6b', '3': '#7b8494', '4': '#a5aebd',
+    '5': '#2f3d1c', '6': '#5a7028', '7': '#8ba33c', '8': '#b8cf5e', '9': '#6b7c94', a: '#9fb0c6', b: '#d6e2f0', c: '#f2f7ff',
+    d: '#5c2a10', e: '#a3521a', f: '#e08b2a', g: '#ffbe55', h: '#0a3f5c', i: '#0a7f9e', j: '#00c8ef', l: '#7ceaff',
+    x: '#d94040', y: '#8e1420', G: '#ffc94d', W: '#fff8e0', O: '#ff8a2b', C: '#7ceaff', E: '#ff4d4d', R: '#c25a10'
+};
+export const SPR = {
+    lug: ['.....kkk.....', '....k433k....', '...k43321k...', '..k4332211k..', '..k4332211k..', '..k4332211k..', '..k43AA211k..', '..k43AW211k..', '..k4332211k..', '..k4332211k..', '..k4332211k..', '..k4kkkk11k..', '..k4332211k..', '..k4332211k..', '..k4332211k..', '.kk4332211kk.', 'k2k4332211k1k', 'k2k4332211k1k', '...k22221k...'],
+    needle: ['......k......', '.....k8k.....', '.....k8k.....', '....k988k....', '....k988k....', '....k765k....', '....k765k....', '....k765k....', '....k7C5k....', '....k765k....', '....k765k....', '....k988k....', '....k765k....', '....k765k....', '....k765k....', '..k6k765k6k..', '.k66k765k66k.', 'k666k765k666k', '....k555k....'],
+    hive: ['......kkk......', '.....kdcbk.....', '....kdccbbk....', '...kddccbbak...', '..kddccbbbaak..', '..kddccbbbaak..', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '.kddCbbCbbCaak.', '.kddccbbbbaaak.', '.kddccbbbbaaak.', '..kddccbbbaak..', '..kddccbbbaak..', '.kkddccbbbaakk.', 'kbkddccbbbaakak', 'kbkddccbbbaakak', '...kbbbbbbbk...'],
+    pip: ['....k....', '...kck...', '...kck...', '..kdcbk..', '..kdcbk..', '..kWcbk..', '..kdcbk..', '..kdcbk..', '.kkdcbkk.', 'kckdcbkck', '..kbbbk..'],
+    anvil: ['..kkkkkkkkkkk..', '..kggffffeeek..', '.kkggffffeeekk.', '.kAAffffffeeek.', '.kAAffffffeeek.', '.kggAAffffeeek.', '.kggAAffffeeek.', '.kggffAAffeeek.', '.kggffAAffeeek.', '.kggffffAAeeek.', '.kggffffAAeeek.', '.kggffffffiiek.', '.kggffffffiiek.', '.kAAffffffeeek.', '.kkggffffeeekk.', '..kggffffeeek..', '..kkkkkkkkkkk..', '...kfffffffk...'],
+    wasp: ['......k......', '.....klk.....', '....kljlk....', '...kljjjlk...', '..kEljjjlEk..', '..kEljjjlEk..', '..kljjjjjlk..', '..klllllllk..', '..kmmmmmmmk..', '..kljjjjjlk..', '..kljjjjjlk..', '..klllllllk..', '..kmmmmmmmk..', '..kljjjjjlk..', '..kljjjjjlk..', '.kkljjjjjlkk.', 'klkljjjjjlklk', 'klkljjjjjlklk', '...kjjjjjk...'],
+    ghost: ['......k......', '.....kqk.....', '....kqppk....', '...kqpponk...', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqWppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '..kqqppoonk..', '.kkqqppoonkk.', 'kpkqqppoonknk', 'kpkqqppoonknk', '...kooooek...'],
+    warden: ['.........kkk.........', '........kstsk........', '.......ksrtrsk.......', '......ksrrtrrsk......', '.....ksrrrtrrrsk.....', '....ksrrrrtrrrrsk....', '...ksrrrrrtrrrrrsk...', '...ksrrrrrurrrrrsk...', '...ksrrrrrtrrrrrsk...', '...kstttrrrrrtttsk...', '...ksuuurrrrruuusk...', '...kstttrrrrrtttsk...', '...ksrrrrrtrrrrrsk...', '...ksrrrrrurrrrrsk...', '...ksrrrrrtrrrrrsk...', '...ksrrrrrrrrrrrsk...', '...ksrtrrrrrrrtrsk...', '...ksrtrrrrrrrtrsk...', '...ksrrrrrrrrrrrsk...', '..kksrrrrrrrrrrrskk..', '.ktksrrrrrrrrrrrsktk.', '.ktksrrrrrrrrrrrsktk.', '.ktksrrrrrrrrrrrsktk.', '.....ksssssssssk.....'],
+    pac: ['..kkkkkkkkkkkkkk..', '..kkk7kk7kk7kk7k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..k887777776655k..', '..kkkkkkkkkkkkkk..', '.k43333333333332k.', '.k43333333333332k.', '.k43333333333332k.', '.kkkkkkkkkkkkkkkk.', '.k4k2222222222k4k.', '.k4k2222222222k4k.', '.kkkkkkkkkkkkkkkk.'],
+    thaad: ['...kkkkkk...', '...kkkkkk...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kxxxxk...', '...kyyyyk...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kcbbak...', '...kkkkkk...', '..k99aa99k..', '.k99aaaa99k.', '.k9aGGaaa9k.', 'kk99aaaa99kk', 'k1122222211k', 'kkkkkkkkkkkk'],
+    flak: ['..kggffffffek.....', '..kggffffffek.....', '..kggfGffffek.....', '..kggffffffek.....', '..keeeeeeeeek.....', '.keeeffffffffeeek.', '.k11222222222211k.', '.kkkkkkkkkkkkkkkk.'],
+    thaadr: ['...k...', '..k1k..', '..k1k..', '..k1k..', '..kck..', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', 'kkccbkk', '.kcabk.', '.kcabk.', '.kccbk.', '.kccbk.', '.kccbk.', '.kccbk.', 'kkccbkk', 'kkccbkk', '..kfk..'],
+    icept: ['..k..', '.kck.', '.kck.', '.kbk.', '.kxk.', '.kbk.', '.kbk.', 'kkbkk', '.kkk.'],
+    dew: ['....kkkkkkkk....', '..kkiijjjjiikk..', '.kiijjlllllljik.', '.kijjllWWWWlljk.', '.kijjllWWWWlljk.', '.kiijjlllllljik.', '..kkiijjjjiikk..', '....kkkkkkkk....', '......k99k......', '......k99k......', '.k99aaaaaaaa99k.', 'kk99aaaaaaaa99kk', '.k99aaaaaaaa99k.', 'kk99aaaaaaaa99kk', '.k112222222211k.', '.kkkkkkkkkkkkkk.'],
+};
+/** @type {Record<string, [string, Record<string, string>]>} */
+export const MK = {
+    lug2: ['lug', { '1': '#5c1524', '2': '#8e1420', '3': '#d94040', '4': '#ff8a72' }],
+    needle2: ['needle', { '5': '#8e1420', '6': '#d94040', '7': '#ff8a72' }],
+    hive2: ['hive', { a: '#5c1524', b: '#8e1420', c: '#d94040', d: '#ffb072' }],
+    anvil2: ['anvil', { e: '#2c3440', f: '#586373', g: '#9aa6b2', A: '#ff4d4d', i: '#d94040' }],
+    wasp2: ['wasp', { j: '#c25a10', l: '#ff8a2b', m: '#8e1420' }],
+    warden2: ['warden', { r: '#2a1015', s: '#5c1524' }],
+    lug3: ['lug', { '1': '#16171f', '2': '#2a2c38', '3': '#f2703f', '4': '#ffb072' }],
+    needle3: ['needle', { '5': '#2a2c38', '6': '#f2703f', '7': '#ffb072' }],
+    hive3: ['hive', { a: '#16171f', b: '#2a2c38', c: '#f2703f', d: '#ffb072' }],
+    anvil3: ['anvil', { e: '#16171f', f: '#2a2c38', g: '#f2703f', A: '#ffb072', i: '#f2703f' }],
+    wasp3: ['wasp', { j: '#2a2c38', l: '#f2703f', m: '#16171f' }],
+    warden3: ['warden', { r: '#16171f', s: '#8e1420', t: '#ff4d4d' }],
+};
+
+// ---- CONFIG (v4 lines 404–541)
+/** @typedef {{hp:number,T:number,dmg:number,$:number,r:number,from?:number,count?:(n:number)=>number,elite?:number,info?:string,pips?:number,shedEvery?:number}} Threat */
+export const CFG = {
+    startCash: 700, maxWave: 30, cityHP: 100, gravity: 0.0020, deployY: 112, blastRadius: 18,
+    tier: { peak: 1.25, ridge: 1, valley: .85 },                        // range multiplier by pad height
+    econ: {
+      waveIncome: 35, waveIncomePerWave: 4,                   // payout per surviving city
+      upgradeMult: [0.8, 1.6, 2],                              // × battery cost: L2, L3, path pick
+      sellRefund: 0.7, repairCost: 0.4
+    },                      // × paid / × battery cost
+    lvl: { dmg: 0.25, range: 0.10, thaadReload: 0.25 },               // bonus per upgrade level (max 2); THAAD reload 2s -> 1.5s -> 1s
+    wave: {
+      lateFrom: 6, lateMult: 0.14,                           // +14% headcount per wave past 6 — the ONLY difficulty ramp; a foe's hp/speed never changes
+      gapBase: 48, gapPerWave: 2.5, gapMin: 9,                // ticks between launches
+      salvoBase: 0.25, salvoPerWave: 0.01
+    },                   // multi-launch chance from wave 10
+    // bestiary: hp, flight time T, city damage, bounty $, radius
+    /** @type {Record<string, Threat>} */
+    threats: {
+      // Each entry is that threat's whole story: combat stats, the wave it debuts (from),
+      // and its per-wave headcount equation (count, of wave n). elite: 1 = exact count,
+      // exempt from the late-wave headcount multiplier (CFG.wave.lateMult).
+      // A '2'/'3' suffix marks a mk2/mk3 variant: same rules as its family (isa() below),
+      // bigger numbers, red (mk2) or black/orange (mk3) skin.
+      lug: {
+        hp: 1, T: 380, dmg: 20, $: 8, r: 7,
+        from: 1, count: n => n <= 2 ? 2 + n * 2 : 3 + (n * 1.5 | 0),
+        info: 'LUG — slow, dumb, dies to anything'
+      },
+      lug2: {
+        hp: 5, T: 340, dmg: 25, $: 20, r: 7,
+        from: 13, count: n => 1 + ((n - 12) / 2 | 0),
+        info: 'LUG-2 — armoured lug: soaks a full PAC burst'
+      },
+      lug3: {
+        hp: 12, T: 310, dmg: 30, $: 40, r: 7,
+        from: 22, count: n => 1 + ((n - 21) / 3 | 0),
+        info: 'LUG-3 — flying bunker. Focus fire'
+      },
+      needle: {
+        hp: 1, T: 150, dmg: 15, $: 12, r: 6,
+        from: 5, count: n => 2 + ((n - 5) / 2 | 0), elite: 1,
+        info: 'NEEDLE — outruns PAC interceptors'
+      },
+      needle2: {
+        hp: 5, T: 135, dmg: 20, $: 35, r: 6,
+        from: 16, count: n => 1 + ((n - 16) / 3 | 0), elite: 1,
+        info: 'NEEDLE-2 — faster, tougher. Same counters: FLAK, DEW or THAAD'
+      },
+      needle3: {
+        hp: 12, T: 120, dmg: 25, $: 70, r: 6,
+        from: 24, count: n => 1 + ((n - 24) / 3 | 0), elite: 1,
+        info: 'NEEDLE-3 — blistering fast. FLAK, DEW or THAAD'
+      },
+      hive: {
+        hp: 3, T: 280, dmg: 30, $: 18, r: 8, pips: 5,
+        from: 10, count: n => 1 + ((n - 9) / 1.5 | 0),
+        info: 'HIVE — splits into 5 PIPS'
+      },
+      hive2: {
+        hp: 10, T: 260, dmg: 35, $: 45, r: 8, pips: 8,
+        from: 20, count: n => 1 + ((n - 19) / 3 | 0),
+        info: 'HIVE-2 — thick shell, splits into 8 PIPS'
+      },
+      hive3: {
+        hp: 25, T: 240, dmg: 40, $: 90, r: 8, pips: 12,
+        from: 27, count: n => 1 + ((n - 27) / 3 | 0),
+        info: 'HIVE-3 — splits into 12 PIPS. Kill it high'
+      },
+      pip: { hp: 1, T: 0, dmg: 10, $: 4, r: 5 },   // never launched: hives shed them
+      anvil: {
+        hp: 6, T: 500, dmg: 40, $: 30, r: 8,
+        from: 8, count: n => (n - 5) / 1.4 | 0,
+        info: 'ANVIL — small kinetics bounce off. FLAK, DEW or THAAD'
+      },
+      anvil2: {
+        hp: 15, T: 460, dmg: 50, $: 70, r: 8,
+        from: 17, count: n => 1 + ((n - 16) / 3 | 0),
+        info: 'ANVIL-2 — heavy armour. Small kinetics still bounce off'
+      },
+      anvil3: {
+        hp: 35, T: 420, dmg: 60, $: 140, r: 8,
+        from: 25, count: n => 1 + ((n - 24) / 4 | 0),
+        info: 'ANVIL-3 — a vault door with engines. THAAD or AP FLAK'
+      },
+      wasp: {
+        hp: 2, T: 260, dmg: 0, $: 25, r: 7,
+        from: 11, count: n => (n - 8) >> 1,
+        info: 'WASP — hunts your guns. Too small for FLAK: PAC, THAAD or DEW'
+      },
+      wasp2: {
+        hp: 10, T: 240, dmg: 0, $: 60, r: 7,
+        from: 21, count: n => (n - 18) / 3 | 0,
+        info: 'WASP-2 — hardened gun-hunter. Still too small for FLAK'
+      },
+      wasp3: {
+        hp: 25, T: 220, dmg: 0, $: 120, r: 7,
+        from: 27, count: n => (n - 24) / 3 | 0,
+        info: 'WASP-3 — armoured gun-hunter. Still too small for FLAK'
+      },
+      ghost: {
+        hp: 1, T: 170, dmg: 0, $: 0, r: 7,
+        from: 3, count: n => 5 + ((n - 3) / 2 | 0),
+        info: 'GHOST — harmless decoy that wastes PAC and FLAK shots. THAAD and DEW ignore it'
+      },
+      warden: {
+        hp: 120, T: 800, dmg: 50, $: 250, r: 12, shedEvery: 140,
+        from: 19, count: n => ((n - 19) % 3 === 0 ? 1 : 0) + (n >= 25 ? 1 : 0) + (n >= 29 ? 1 : 0), elite: 1,
+        info: 'WARDEN — boss. Soaks huge damage, sheds HIVES. Bring everything'
+      },
+      warden2: {
+        hp: 200, T: 750, dmg: 60, $: 500, r: 12, shedEvery: 140,
+        from: 27, count: n => n % 3 === 0 ? 1 : 0, elite: 1,   // waves 27 and 30
+        info: 'WARDEN-2 — boss. Sheds HIVE-2s'
+      },
+      warden3: {
+        hp: 350, T: 700, dmg: 75, $: 1000, r: 12, shedEvery: 140,
+        from: 30, count: () => 1, elite: 1,
+        info: 'WARDEN-3 — final boss. Sheds HIVE-3s'
+      },
+    },
+    // armory: cost, base dmg, damage type, range, cooldown ticks, shot speed + A/B upgrade paths
+    batteries: {
+      pac: {
+        info: 'Crate of 6 small homing interceptors: burst, then reload. Short reach. Bounces off ANVIL, NEEDLES outrun it, GHOSTS fool it.', name: 'PAC', cost: 200, dmg: 1, type: 'kinetic', range: 140, cool: 90, mag: 6, spd: 5, col: '#ffc94d',
+        paths: { A: { name: 'SEEKER', info: 'Agile seeker heads: CAN hit NEEDLES', seeker: 1, dmg: 1.2 }, B: { name: 'QUAD-PACK', info: '12-cell crate, half the reload', mag: 12, cool: 45 } }
+      },
+      thaad: {
+        info: 'Heavy interceptor, longest reach, fires every 2 seconds. Hunts the toughest target: catches NEEDLES, pierces ANVIL armour. Sees through GHOSTS.', name: 'THAAD', cost: 900, dmg: 8, type: 'kinetic', range: 270, cool: 120, spd: 10, col: '#ffe79a',
+        paths: { A: { name: 'EXO-KILL', info: '+50% reach, +50% damage: one-shots late HIVES', range: 1.5, dmg: 1.5 }, B: { name: 'SALVO', info: 'Fires 2 rounds per cycle', burst: 2, dmg: 0.8 } }
+      },
+      flak: {
+        info: 'Swivelling twin cannon hoses proximity rounds, area damage. Short reach. Shreds ANVIL and PIP swarms. WASPS are too small to burst, GHOSTS fool it.', name: 'FLAK', cost: 550, dmg: 1.5, type: 'blast', range: 160, cool: 70, spd: 6, col: '#ff8a2b',
+        paths: { A: { name: 'PROXIMITY', info: 'Huge burst disc, 8-round stream: PIP shredder', radius: 30, stream: 8 }, B: { name: 'AP', info: 'Armour-piercing: 2.5x damage, small burst. ANVIL killer', dmg: 2.5, radius: 12 } }
+      },
+      dew: {
+        info: 'Charges, then an instant volley of laser lines that burn EVERYTHING along them — NEEDLES cannot dodge. Levels add beams. Long reach, slow cycle. Ignores GHOSTS.', name: 'DEW', cost: 1200, dmg: 6, type: 'energy', range: 230, cool: 80, spd: 0, beams: [1, 2, 3], col: '#00c8ef',
+        paths: { A: { name: 'PULSE', info: 'Fires 3x as often at half damage', cool: 25, charge: 15, dmg: 0.5 }, B: { name: 'LANCE', info: '2x damage, slower charge', dmg: 2, charge: 60 } }
+      },
+    },
+};
