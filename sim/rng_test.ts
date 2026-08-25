@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertNotEquals } from 'jsr:@std/assert';
+import { assert, assertEquals, assertNotEquals } from '@std/assert';
 import { mulberry32 } from './rng.js';
 
 Deno.test('same seed gives same sequence', () => {
@@ -12,5 +12,8 @@ Deno.test('different seeds differ', () => {
 
 Deno.test('values in [0,1)', () => {
   const r = mulberry32(7);
-  for (let i = 0; i < 10000; i++) { const v = r(); assert(v >= 0 && v < 1, `${v}`); }
+  for (let i = 0; i < 10000; i++) {
+    const v = r();
+    assert(v >= 0 && v < 1, `${v}`);
+  }
 });

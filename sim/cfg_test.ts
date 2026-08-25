@@ -1,4 +1,4 @@
-import { assert, assertEquals } from 'jsr:@std/assert';
+import { assert, assertEquals } from '@std/assert';
 import { CFG, FLATS, groundY, MK, SLOT_DEFS, SPR, W } from './cfg.js';
 
 Deno.test('sprite rows are rectangular', () => {
@@ -32,7 +32,8 @@ Deno.test('12 slots, every slot sits on its flat', () => {
 Deno.test('sim sources are DOM-free', async () => {
   for (const f of ['cfg.js', 'rng.js']) {
     const src = await Deno.readTextFile(new URL(f, import.meta.url));
-    for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.', 'canvas', 'requestAnimationFrame'])
+    for (const bad of ['window', 'document', 'Math.random', 'AudioContext', 'performance.', 'Date.', 'canvas', 'requestAnimationFrame']) {
       assert(!src.includes(bad), `${f} contains ${bad}`);
+    }
   }
 });
