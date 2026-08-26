@@ -20,6 +20,7 @@
     "singleQuote": true,
     "exclude": [
       "index.html",
+      "play.html",
       "docs/"
     ]
   },

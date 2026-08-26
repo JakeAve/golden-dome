@@ -5,7 +5,7 @@ description: Use when testing, balancing, debugging or playing Golden Dome — w
 
 # Golden Dome — sim engine
 
-`sim/` is a headless, deterministic simulation. `index.html` only draws it.
+`sim/` is a headless, deterministic simulation. `play.html` only draws it.
 
 ## Invariants (tests enforce them)
 
@@ -80,7 +80,7 @@ AoE and beam hits count against non-flak shots, so >1 is normal), cash at waves
 deno task serve          # module scripts don't load over file://
 ```
 
-Open http://localhost:4507/?seed=N (the HUD shows `#N`; a bug seen in play is a
+Open http://localhost:4507/play.html?map=valley&seed=N (the HUD shows `#N`; a bug seen in play is a
 seed + build order). With Playwright (`browser_navigate`, `browser_evaluate`,
 `browser_take_screenshot`), `window.GD` **is** the game object:
 `GD.cash = 5000; GD.build(8,'pac'); GD.startWave(); GD.speed = 4;` then poll
@@ -89,5 +89,5 @@ seed + build order). With Playwright (`browser_navigate`, `browser_evaluate`,
 ## Hooks and layout
 
 `deno task setup` once per clone installs `.githooks` (pre-commit and pre-push
-run `deno fmt --check && deno lint && deno check` + tests). `index.html` and
+run `deno fmt --check && deno lint && deno check` + tests). `play.html` and
 `docs/` are excluded from fmt/lint. Balance numbers live only in `sim/cfg.js`.

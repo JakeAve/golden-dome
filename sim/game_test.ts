@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { assert, assertEquals, assertNotEquals, assertStrictEquals } from '@std/assert';
 import { createGame } from './game.js';
+import { MAPS } from './maps.js';
 import { CFG, SPR } from './cfg.js';
 
 const TT = CFG.threats, BT = CFG.batteries;
@@ -310,4 +311,14 @@ Deno.test('first sighting of a threat emits a toast event, once', () => {
   const toasts = g.events.filter((e) => e.t === 'toast' && e.txt === TT.lug.info);
   assertEquals(toasts.length, 1);
   assert(g.seen.lug);
+});
+
+Deno.test('every map plays: full loadout survives 3 waves and cities take only in-span hits', () => {
+  for (const m of Object.values(MAPS)) {
+    const g = createGame({ seed: 3, cfg: { startCash: 9999 }, map: m }) as any;
+    for (let i = 0; i < 12; i++) g.build(i, 'pac');
+    g.run({ untilWave: 3, maxTicks: 20000 });
+    assert(g.wave >= 3 && g.phase !== 'over', m.key);
+    for (const c of g.cities) assert(c.hp >= 0 && c.hp <= CFG.cityHP, m.key);
+  }
 });

@@ -1,46 +1,6 @@
-// sim/cfg.js — every tuning number, sprite row and terrain point. Pure data, no logic beyond groundY.
+// sim/cfg.js — every tuning number and sprite row. Pure data. Terrain lives in maps.js.
 
 export const W = 624, H = 288, HUD = 26, GY = H - HUD;
-
-/** @param {number} v @param {number} a @param {number} z */
-const cl = (v, a, z) => v < a ? a : v > z ? z : v;
-
-// ---- terrain profile
-export const FLATS = [
-  { x0: -4, x1: 104, y: 142 }, // left high mesa
-  { x0: 104, x1: 166, y: 200 }, // left shelf
-  { x0: 166, x1: 228, y: 252 }, // left valley lip (buildable, level with the city)
-  { x0: 228, x1: 400, y: 252 }, // city floor
-  { x0: 400, x1: 462, y: 252 }, // right valley lip (buildable, level with the city)
-  { x0: 462, x1: 520, y: 194 }, // right shelf
-  { x0: 520, x1: 628, y: 152 }, // right mesa
-];
-const TOP = new Int16Array(W);
-for (let x = 0; x < W; x++) {
-  let y = 250;
-  for (const f of FLATS) if (x >= f.x0 && x < f.x1) y = f.y;
-  TOP[x] = y;
-}
-/** @param {number} x */
-export const groundY = (x) => TOP[cl(x | 0, 0, W - 1)];
-
-// ---- battery pads and cities
-/** @type {[number, number, 'peak'|'ridge'|'valley'][]} */
-export const SLOT_DEFS = [
-  [30, 142, 'peak'],
-  [78, 142, 'peak'],
-  [546, 152, 'peak'],
-  [594, 152, 'peak'],
-  [122, 200, 'ridge'],
-  [150, 200, 'ridge'],
-  [478, 194, 'ridge'],
-  [506, 194, 'ridge'],
-  [184, 252, 'valley'],
-  [212, 252, 'valley'],
-  [416, 252, 'valley'],
-  [444, 252, 'valley'],
-];
-export const CITY_DEFS = [{ a: 230, z: 308 }, { a: 318, z: 398 }];
 
 // ---- sprites
 export const TP = {

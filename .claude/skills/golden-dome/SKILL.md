@@ -102,7 +102,7 @@ change: `deno task bench --games 50 --loadout thaad,thaad,dew,flak --cash 5000 -
    `shedEvery`). A mk-variant name must be `<family><digit>` so `isa()` inherits
    rules. `count` must return ≥1 by `from`.
 2. Sprite: base rows in `SPR`, or a recolour in `MK` (`golden-dome-art`).
-3. `index.html` `SFX` matches by family (`k.replace(/\d$/, '')`) — a new family needs a sound row.
+3. `play.html` `SFX` matches by family (`k.replace(/\d$/, '')`) — a new family needs a sound row.
 4. Flash states: hives get `_hot`, wardens `_hot`, wasps `_lock` — the loops in
-   `index.html` build them for every `MK` key by family prefix.
+   `play.html` build them for every `MK` key by family prefix.
 5. `deno task test` — the "every scheduled type has stats and a sprite" test catches a missing sprite.

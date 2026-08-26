@@ -1,5 +1,6 @@
 // sim/game.js — headless Golden Dome simulation. No DOM, no wall clock, no native RNG.
-import { CFG as BASE_CFG, CITY_DEFS, groundY, GY, SLOT_DEFS, SPR, W } from './cfg.js';
+import { CFG as BASE_CFG, GY, SPR, W } from './cfg.js';
+import { makeGroundY, MAPS } from './maps.js';
 import { mulberry32 } from './rng.js';
 
 const cl = (/** @type {number} */ v, /** @type {number} */ a, /** @type {number} */ z) => v < a ? a : v > z ? z : v;
@@ -56,6 +57,8 @@ const P = (b, k, d) => {
  * @typedef {Object} Game
  * @property {number} seed
  * @property {any} cfg
+ * @property {import('./maps.js').GameMap} map
+ * @property {(x: number) => number} groundY
  * @property {() => number} _rnd
  * @property {number} cash
  * @property {number} wave
@@ -102,25 +105,28 @@ const P = (b, k, d) => {
  */
 
 /**
- * @param {{seed?: number, cfg?: object}} [opts]
+ * @param {{seed?: number, cfg?: object, map?: import('./maps.js').GameMap}} [opts]
  * @returns {Game}
  */
-export function createGame({ seed = 1, cfg = {} } = {}) {
+export function createGame({ seed = 1, cfg = {}, map = MAPS.valley } = {}) {
   const CFG = { ...BASE_CFG, ...cfg };
+  const groundY = makeGroundY(map.flats);
   const TIER = CFG.tier, BT = CFG.batteries, TT = CFG.threats, G = CFG.gravity, DEPLOY_Y = CFG.deployY, MAXWAVE = CFG.maxWave;
   const rnd = mulberry32(seed);
 
   const g = {
     seed,
     cfg: CFG,
+    map,
+    groundY,
     _rnd: rnd,
     cash: CFG.startCash,
     wave: 0,
     phase: 'build',
     tick: 0,
-    cities: CITY_DEFS.map((ct) => ({ ...ct, hp: CFG.cityHP })),
+    cities: map.cities.map((ct) => ({ ...ct, y: groundY(ct.a), hp: CFG.cityHP })),
     /** @type {{x: number, y: number, tier: string, b: Battery|null}[]} */
-    slots: SLOT_DEFS.map(([x, y, tier]) => ({ x, y, tier, b: null })),
+    slots: map.slots.map(([x, y, tier]) => ({ x, y, tier, b: null })),
     /** @type {Foe[]} */
     foes: [],
     shots: /** @type {any[]} */ ([]),

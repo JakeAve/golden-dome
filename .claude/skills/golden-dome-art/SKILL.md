@@ -12,7 +12,7 @@ heavy salvo stays readable. Shared motif of glowing lights (Lug's amber eye,
 Hive's belly ports, Wasp's twin red seekers, Warden's orange seams) gives each
 sprite its animation hook.
 
-## Canvas rules (`index.html`)
+## Canvas rules (`play.html`)
 
 - World grid **624×288** (2.167:1, iPhone landscape edge to edge); HUD strip is
   the bottom 26 px (`HUD`, ground area ends at `GY = 262`). Backing canvas is
@@ -49,10 +49,10 @@ wasp: ['......k......', '.....klk.....', /* … */ '...kjjjjjk...'],
 - Threat rows use palette `TP`, battery rows use `BP` (letter → hex, `k` is the
   outline black in both). Rows live in `sim/cfg.js` because sprite height feeds
   muzzle geometry (`bMuzzle`); rasterising them (`render(rows, pal, overrides)`
-  → offscreen canvas → `IMG[key]`) happens only in `index.html`.
+  → offscreen canvas → `IMG[key]`) happens only in `play.html`.
 - **Recolour variants** — `MK` in `cfg.js`: `wasp2: ['wasp', { j:'#c25a10', l:'#ff8a2b', m:'#8e1420' }]`
   (base sprite, per-letter override). Convention: mk2 = red, mk3 = black/orange.
-  `index.html` builds `IMG[k]` for every `MK` key, plus family flash states:
+  `play.html` builds `IMG[k]` for every `MK` key, plus family flash states:
   `hive*_hot`, `warden*_hot`, `wasp*_lock` (override the light letters to white).
 - Battery states: `<kind>_dead` (grey), `pac_empty`, `thaad_empty`, `dew_chg`,
   `dew_hot` — picked in `draw()` from battery fields.
@@ -72,6 +72,6 @@ toast timers decay by `speed` per frame.
 
 ## Checking a change
 
-`deno task serve` → http://localhost:4507/?seed=1, screenshot with Playwright at
+`deno task serve` → http://localhost:4507/play.html?map=valley&seed=1, screenshot with Playwright at
 1× and at 4× speed mid-wave; compare against the previous build. Nothing in
 `sim/` should change for a visual edit (`deno task test` stays green).
