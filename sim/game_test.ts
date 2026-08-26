@@ -241,24 +241,23 @@ Deno.test('sanity across seeds: cash finite and non-negative, phases progress', 
 });
 
 Deno.test('reference loadout holds the dome to max wave', () => {
-  // ponytail: single seed, single loadout — bench.ts covers the distribution
-  const g = createGame({ seed: 7, cfg: { startCash: 20000 } });
-  g.build(8, 'thaad');
-  g.build(9, 'thaad');
-  g.build(10, 'thaad');
-  g.build(11, 'thaad');
-  g.build(4, 'dew');
-  g.build(6, 'dew');
-  g.build(5, 'flak');
-  g.build(7, 'flak');
+  // ponytail: single seed, single loadout — bench.ts covers the distribution.
+  // Contract: a FULL maxed dome, repaired between waves, wins. A partial or
+  // unmaintained dome is allowed to lose — that's the difficulty rebalance.
+  const g = createGame({ seed: 7, cfg: { startCash: 80000 } });
+  const kinds = ['dew', 'dew', 'dew', 'dew', 'dew', 'dew', 'dew', 'dew', 'thaad', 'thaad', 'thaad', 'thaad'];
+  [8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3].forEach((slot, i) => g.build(slot, kinds[i]));
   for (let i = 0; i < 12; i++) {
-    if (g.slots[i].b) {
-      g.upgrade(i);
-      g.upgrade(i);
-      g.choosePath(i, 'A');
-    }
+    g.upgrade(i);
+    g.upgrade(i);
+    g.choosePath(i, 'A');
   }
-  g.run({ untilPhase: 'win' });
+  let guard = 0;
+  while (g.phase === 'build' && guard++ < 40) {
+    for (let i = 0; i < 12; i++) if (g.slots[i].b!.broken) g.repair(i);
+    g.startWave();
+    g.run({ untilPhase: 'build' });
+  }
   assertEquals(g.phase, 'win', `ended ${g.phase} at wave ${g.wave}`);
 });
 

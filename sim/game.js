@@ -170,7 +170,7 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
   function waveTypes(n) {
     const q = /** @type {string[]} */ ([]), late = 1 + Math.max(0, n - CFG.wave.lateFrom) * CFG.wave.lateMult;
     for (const [t, d] of Object.entries(TT)) {
-      if (!d.from || n < d.from) continue;
+      if (!d.from || n < d.from || (d.to && n > d.to)) continue;
       const k = /** @type {(n: number) => number} */ (d.count)(n) * (d.elite ? 1 : late);
       for (let i = 0; i < k; i++) q.push(t);
     }
@@ -283,7 +283,7 @@ export function createGame({ seed = 1, cfg = {} } = {}) {
     g.phase = 'wave';
     g.queue = composeWave(g.wave);
     g.bias = /** @type {{x: number, w: number}} */ (g.nextBias);
-    gap = Math.max(CFG.wave.gapMin, CFG.wave.gapBase - g.wave * CFG.wave.gapPerWave);
+    gap = g.wave >= CFG.wave.pureFrom ? CFG.wave.pureGap - (g.wave - CFG.wave.pureFrom) * CFG.wave.pureGapPerWave : Math.max(CFG.wave.gapMin, CFG.wave.gapBase - g.wave * CFG.wave.gapPerWave);
     nextLaunch = 30;
     return true;
   }
