@@ -353,7 +353,8 @@
   const isa = (f, t) => f.type.startsWith(t);   // family match: mk2 variants ('anvil2') share their base type's rules
 
   // ---- state -------------------------------------------------------------------
-  let speed = 1, sel = null, selB = null, shake = 0;
+  let speed = 1, sel = null, selB = null, shake = 0, speedOpen = false;
+  const SPEEDS = [0.5, 1, 2, 4];
   let toast = null;
   let nuCache = { wave: -1, nu: [] };
 
@@ -388,6 +389,16 @@
   const fx = v => (v * FINE) | 0;
   function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(fx(x), fx(y), Math.max(1, fx(w)), Math.max(1, fx(h))); }
   function dot(x, y, col) { g.fillStyle = col; g.fillRect(fx(x), fx(y), FINE, FINE); }
+  // FLAK barrels + hub are procedural (they swivel), so every place that shows a flak draws them. hx/hy are fine coords of the hub.
+  function flakTurret(hx, hy, aim, broken, sc) {
+    g.save(); g.translate(hx, hy); if (sc) g.scale(sc, sc); g.save(); g.rotate(aim);
+    const bc = broken ? '#3a3f4a' : BP.f, tc = broken ? '#3a3f4a' : BP.g;
+    for (const oy of [-5, 1]) { g.fillStyle = BP.k; g.fillRect(-7, oy - 1, 35, 6); g.fillStyle = bc; g.fillRect(-6, oy, 32, 4); g.fillStyle = tc; g.fillRect(20, oy, 6, 4); }
+    g.restore();
+    // turret hub on top so the barrels read as mounted
+    g.fillStyle = BP.k; g.fillRect(-7, -7, 14, 14); g.fillStyle = broken ? '#3a3f4a' : BP.e; g.fillRect(-5, -5, 10, 10); g.fillStyle = broken ? '#565d6b' : BP.g; g.fillRect(-3, -3, 4, 4);
+    g.restore();
+  }
   function sprite(img, x, y, ang, flame, sc) {
     sc = sc || 2; g.save(); g.translate(fx(x), fx(y)); if (ang) g.rotate(ang);
     g.drawImage(img, -img.width * sc / 2, -img.height * sc / 2, img.width * sc, img.height * sc);
@@ -421,10 +432,12 @@
     for (const w of str.split(' ')) { const t = line ? line + ' ' + w : w; if (g.measureText(t).width > fx(maxW) && line) { out.push(line); line = w; } else line = t; }
     if (line) out.push(line); return out;
   }
-  function button(x, y, w, h, label, sub, col, on) {
+  function button(x, y, w, h, label, sub, col, on, icon, iy) {
     rect(x, y, w, h, on ? STL[3] : STL[1]); rect(x, y, w, 1, on ? YOU[2] : STL[3]); rect(x, y + h - 1, w, 1, STL[0]);
-    if (sub) { text(label, x + w / 2, y + h * 0.34, col || STL[7], 17, 'center'); text(sub, x + w / 2, y + h * 0.72, STL[5], 14, 'center'); }
-    else text(label, x + w / 2, y + h / 2, col || STL[7], 16, 'center');
+    let cx = x + w / 2;
+    if (icon) { sprite(icon, x + 13, y + h / 2 + (iy || 0), 0, 0, 2); cx += 10; }
+    if (sub) { text(label, cx, y + h * 0.34, col || STL[7], 17, 'center'); text(sub, cx, y + h * 0.72, col || STL[5], 14, 'center'); }
+    else text(label, cx, y + h / 2, col || STL[7], 16, 'center');
   }
   const BOOM_PAL = {
     ground: [YOU[4], OR[1], THEM[1]], city: [YOU[4], OR[1], THEM[1]], kinetic: [YOU[4], OR[1], OR[0]], energy: [CY[3], CY[2], CY[0]],
@@ -448,21 +461,14 @@
       rect(s.x - 7, s.y - 1, 14, 1, STL[5]); rect(s.x - 7, s.y, 14, 2, STL[2]);
       if (!s.b && sel && game.tick % 30 < 20) { rect(s.x - 8, s.y - 12, 2, 2, YOU[2]); rect(s.x + 6, s.y - 12, 2, 2, YOU[2]); rect(s.x - 8, s.y - 4, 2, 2, YOU[2]); rect(s.x + 6, s.y - 4, 2, 2, YOU[2]); }
       if (s.b && s.b === selB) ring(s.x, bMuzzle(s.b).y, bRange(s.b), STL[7], s.b.def.col);
-      if (!s.b && sel && s === hoverSlot) g.drawImage(IMG[sel], fx(s.x) - IMG[sel].width, fx(s.y) - IMG[sel].height * 2 + 4, IMG[sel].width * 2, IMG[sel].height * 2);
+      if (!s.b && sel && s === hoverSlot) { g.drawImage(IMG[sel], fx(s.x) - IMG[sel].width, fx(s.y) - IMG[sel].height * 2 + 4, IMG[sel].width * 2, IMG[sel].height * 2); if (sel === 'flak') flakTurret(fx(s.x - 3), fx(s.y - 9), -1.1, false); }
       if (!s.b && sel && s === hoverSlot) ring(s.x, s.y - 6, BT[sel].range * TIER[s.tier], YOU[3], BT[sel].col);
     }
     // batteries
     for (const b of batteries()) {
       const img = b.broken ? IMG[b.kind + '_dead'] : b.kind === 'pac' && b.t > 20 && b.mag === 0 ? IMG.pac_empty : b.kind === 'dew' && b.charge > 0 ? (b.charge < 12 && game.tick % 2 ? IMG.dew_hot : IMG.dew_chg) : b.kind === 'thaad' && b.t > 30 ? IMG.thaad_empty : IMG[b.kind];
       g.drawImage(img, fx(b.slot.x) - img.width, fx(b.slot.y) - img.height * 2 + 4, img.width * 2, img.height * 2);
-      if (b.kind === 'flak') {
-        g.save(); g.translate(fx(b.slot.x - 3), fx(b.slot.y - 9)); g.rotate(b.aim);
-        const bc = b.broken ? '#3a3f4a' : BP.f, tc = b.broken ? '#3a3f4a' : BP.g;
-        for (const oy of [-5, 1]) { g.fillStyle = BP.k; g.fillRect(-7, oy - 1, 35, 6); g.fillStyle = bc; g.fillRect(-6, oy, 32, 4); g.fillStyle = tc; g.fillRect(20, oy, 6, 4); }
-        g.restore();
-        // turret hub on top so the barrels read as mounted
-        const hx = fx(b.slot.x - 3), hy = fx(b.slot.y - 9); g.fillStyle = BP.k; g.fillRect(hx - 7, hy - 7, 14, 14); g.fillStyle = b.broken ? '#3a3f4a' : BP.e; g.fillRect(hx - 5, hy - 5, 10, 10); g.fillStyle = b.broken ? '#565d6b' : BP.g; g.fillRect(hx - 3, hy - 3, 4, 4);
-      }
+      if (b.kind === 'flak') flakTurret(fx(b.slot.x - 3), fx(b.slot.y - 9), b.aim, b.broken);
       if (b.lvl) for (let i = 0; i < b.lvl; i++)rect(b.slot.x - 5 + i * 5, b.slot.y + 3, 4, 2, YOU[2]);
       if (b.broken) { const h = (game.tick / 3 + b.slot.x) % 16 | 0; dot(b.slot.x + ((hash(h, 3) * 3) | 0) - 1, b.slot.y - 8 - h, h < 5 ? OR[1] : STL[4]); }
     }
@@ -554,11 +560,14 @@
     text('#' + seed, 502, GY + 13, STL[5], 9, 'right');
     let bx = 96;
     for (const k in BT) {
-      const d = BT[k]; UI.btns.push({ x: bx, y: GY + 2, w: 64, h: HUD - 4, act: 'sel', k });
-      button(bx, GY + 2, 64, HUD - 4, d.name, `$${d.cost}`, game.cash >= d.cost ? d.col : THEM[2], sel === k); bx += 67;
+      const d = BT[k]; UI.btns.push({ x: bx, y: GY + 2, w: 78, h: HUD - 4, act: 'sel', k });
+      const iy = k === 'flak' ? 4 : 0, ok = game.cash >= d.cost; // flak base sits low so base + turret centre as a whole
+      button(bx, GY + 2, 78, HUD - 4, d.name, `$${d.cost}`, ok ? d.col : STL[4], sel === k, ok ? IMG[k] : IMG[k + '_dead'], iy);
+      if (k === 'flak') flakTurret(fx(bx + 10), fx(GY + 2 + (HUD - 4) / 2 + iy - 7), -0.25, !ok, 0.7); // hub sits 3 left, 7 up of the sprite centre
+      bx += 81;
     }
     UI.btns.push({ x: W - 78, y: GY + 2, w: 75, h: HUD - 4, act: 'start' }, { x: W - 116, y: GY + 2, w: 34, h: HUD - 4, act: 'speed' });
-    button(W - 116, GY + 2, 34, HUD - 4, speed + '×', null, STL[6], speed !== 1);
+    button(W - 116, GY + 2, 34, HUD - 4, speed + '×' + (speedOpen ? ' ▾' : ' ▴'), null, STL[6], speed !== 1);
     if (game.phase === 'build') button(W - 78, GY + 2, 75, HUD - 4, game.wave ? 'NEXT ▶' : 'START ▶', null, YOU[3], game.tick % 40 < 20);
     else button(W - 78, GY + 2, 75, HUD - 4, `${game.queue.length + game.foes.length} inbound`, null, THEM[3]);
     if (game.phase === 'build' && game.wave < MAXWAVE) {
@@ -575,6 +584,9 @@
     if (sel) { const lines = wrap(BT[sel].info, W - 16, 14); rect(0, GY - 2 - lines.length * 9, W, lines.length * 9 + 1, 'rgba(10,12,20,0.75)'); lines.forEach((l, i) => text(l, W / 2, GY - lines.length * 9 + 3 + i * 9, STL[7], 14, 'center')); }
     else if (!game.wave && game.phase === 'build') { const m = batteries().length ? 'Tap START when ready' : 'Pick a battery, place it on a pad'; text(m, W / 2, GY - 10, STL[7], 16, 'center'); }
     if (game.phase === 'wave') { const txt = `heavy from the ${game.bias.x < W / 3 ? 'WEST' : game.bias.x > W * 2 / 3 ? 'EAST' : 'CENTER'}`; text(txt, W / 2, 8, THEM[3], 14, 'center'); }
+    if (speedOpen) { // drop-up: slowest at top, current highlighted; unshift so it wins the hit-test
+      SPEEDS.forEach((v, i) => { const y = GY + 2 - 13 * (SPEEDS.length - i); UI.btns.unshift({ x: W - 116, y, w: 34, h: 13, act: 'speedSet', v }); button(W - 116, y, 34, 13, v + '×', null, v === speed ? YOU[2] : STL[7], v === speed); });
+    }
     if (game.phase === 'over' || game.phase === 'win') {
       rect(0, 0, W, H, 'rgba(10,12,20,0.6)'); text(game.phase === 'win' ? 'DOME HELD' : 'CITIES LOST', W / 2, H / 2 - 12, game.phase === 'win' ? YOU[2] : THEM[2], 28, 'center'); if (game.phase === 'over') { UI.btns.push({ x: W / 2 - 110, y: H / 2 + 4, w: 100, h: 16, act: 'retry' }, { x: W / 2 + 10, y: H / 2 + 4, w: 100, h: 16, act: 'restart' }); button(W / 2 - 110, H / 2 + 4, 100, 16, `RETRY WAVE ${game.wave}`, null, YOU[2], true); button(W / 2 + 10, H / 2 + 4, 100, 16, 'RESTART', null, STL[7]); }
       else text(`wave ${game.wave} · tap to restart`, W / 2, H / 2 + 12, STL[7], 13, 'center');
@@ -591,12 +603,14 @@
   c.addEventListener('pointerdown', e => {
     e.preventDefault(); unmute(); const p = toWorld(e);
     const ui = UI.hit(p.x, p.y);
+    if (ui && ui.act === 'speedSet') { speed = ui.v; speedOpen = false; return; }
+    if (ui && ui.act === 'speed') { speedOpen = !speedOpen; return; }
+    speedOpen = false;
     const idx = selB ? SLOTS.indexOf(selB.slot) : -1;
     if (game.phase === 'over' || game.phase === 'win') { if (ui && ui.act === 'retry') { if (game.retryWave()) { sel = null; selB = null; toast = null; } } else if (!ui || ui.act === 'restart') location.reload(); return; }
     if (ui) {
       if (ui.act === 'sel') { sel = sel === ui.k ? null : ui.k; selB = null; }
       else if (ui.act === 'start') { if (game.startWave()) { selB = null; toast = null; } }
-      else if (ui.act === 'speed') speed = ({ 0.5: 1, 1: 2, 2: 4, 4: 0.5 })[speed];
       else if (ui.act === 'up') game.upgrade(idx);
       else if (ui.act === 'pathA' || ui.act === 'pathB') game.choosePath(idx, ui.act.slice(-1));
       else if (ui.act === 'sell') { game.sell(idx); selB = null; }
