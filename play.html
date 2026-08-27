@@ -40,16 +40,17 @@
 <div id=boot style="position:fixed;inset:0;display:grid;place-items:center;color:#c2ccd6;font:14px ui-monospace,Menlo,monospace;text-align:center;padding:1em">Loading… if this stays, serve over HTTP: <code>deno task serve</code> → http://localhost:4507/</div>
 <script type="module">
   import { createGame } from './sim/game.js';
-  import { W, H, HUD, GY, TP, BP, SPR, MK } from './sim/cfg.js';
+  import { W, H, HUD, GY, TP, BP, SPR, MK, DIFF } from './sim/cfg.js';
   import { MAPS } from './sim/maps.js';
   document.getElementById('boot').remove();
   const Q = new URLSearchParams(location.search);
   const seed = Number(Q.get('seed')) || (Date.now() % 1e9);
   const MAP = MAPS[Q.get('map')] || MAPS.valley;
+  const diff = Q.get('diff') in DIFF ? Q.get('diff') : 'normal';
   const FLATS = MAP.flats, FLOOR = Math.max(...FLATS.map(f => f.y));
-  const game = createGame({ seed, map: MAP });
+  const game = createGame({ seed, map: MAP, cfg: DIFF[diff] });
   // ---- persistence: the sim is deterministic, so a save is just the command log (with ticks). Replay on load.
-  const SAVE = `gd:${MAP.key}:${seed}`, LOG = [];
+  const SAVE = `gd:${MAP.key}:${seed}` + (diff === 'normal' ? '' : `:${diff}`), LOG = [];
   let noSave = false;
   const save = () => { if (noSave) return; try { localStorage.setItem(SAVE, JSON.stringify({ log: LOG, tick: game.tick })); } catch { /* private mode */ } };
   const stepTo = t => { while (game.tick < t && (game.phase === 'build' || game.phase === 'wave')) game.step(); };
@@ -575,7 +576,7 @@
     // HUD bar
     rect(0, GY, W, HUD, STL[0]); rect(0, GY, W, 1, STL[2]);
     text(`$${game.cash}`, 6, GY + 8, YOU[2], 20); text(`WAVE ${game.wave}/${MAXWAVE}`, 6, GY + 19, STL[5], 13);
-    text('#' + seed, 502, GY + 13, STL[5], 9, 'right');
+    text((diff === 'normal' ? '' : diff.toUpperCase() + ' ') + '#' + seed, 502, GY + 13, STL[5], 9, 'right');
     let bx = 96;
     for (const k in BT) {
       const d = BT[k]; UI.btns.push({ x: bx, y: GY + 2, w: 78, h: HUD - 4, act: 'sel', k });
@@ -669,7 +670,7 @@
   const inPlay = () => game.phase !== 'over' && game.phase !== 'win' && (game.wave > 0 || batteries().length > 0);
   document.getElementById('back').onclick = () => { if (!inPlay()) return true; leaving = 'link'; return false; };
   // Back button: a trap entry so popstate shows the overlay instead of leaving; LEAVE then goes back past it.
-  Q.set('seed', seed); Q.set('map', MAP.key); history.replaceState({ gd: 0 }, '', '?' + Q); history.pushState({ gd: 1 }, '');
+  Q.set('seed', seed); Q.set('map', MAP.key); if (diff === 'normal') Q.delete('diff'); else Q.set('diff', diff); history.replaceState({ gd: 0 }, '', '?' + Q); history.pushState({ gd: 1 }, '');
   addEventListener('popstate', () => { if (inPlay()) { leaving = 'back'; history.pushState({ gd: 1 }, ''); } else history.back(); });
   window.GD = game;
   Object.defineProperty(game, 'speed', { get: () => speed, set: v => { speed = v; }, configurable: true });

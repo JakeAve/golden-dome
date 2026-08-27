@@ -36,12 +36,16 @@
 <p>pick a map</p>
 <nav class="maps" id="maps"></nav>
 <label>seed <input id="seed" placeholder="random" inputmode="numeric"></label>
+<label>difficulty <select id="diff"><option>easy<option selected>normal<option>hard<option>expert</select></label>
 <script type="module">
   import { MAPS } from './sim/maps.js';
   import { W, GY } from './sim/cfg.js';
-  const seedIn = document.getElementById('seed'), nav = document.getElementById('maps');
-  seedIn.value = new URLSearchParams(location.search).get('seed') || '';
-  const href = (k) => `play.html?map=${k}` + (seedIn.value ? `&seed=${Number(seedIn.value) || ''}` : '');
+  const seedIn = document.getElementById('seed'), diffIn = document.getElementById('diff'), nav = document.getElementById('maps');
+  const Q = new URLSearchParams(location.search);
+  seedIn.value = Q.get('seed') || ''; diffIn.value = Q.get('diff') || 'normal';
+  const href = (k) => `play.html?map=${k}` + (seedIn.value ? `&seed=${Number(seedIn.value) || ''}` : '') + (diffIn.value !== 'normal' ? `&diff=${diffIn.value}` : '');
+  const relink = () => { for (const a of nav.children) a.href = href(new URL(a.href).searchParams.get('map')); };
+  diffIn.addEventListener('change', relink);
   for (const m of Object.values(MAPS)) {
     const a = document.createElement('a'); a.className = 'map'; a.href = href(m.key);
     const cv = document.createElement('canvas'); cv.width = W / 2; cv.height = GY / 2;
@@ -52,5 +56,5 @@
     a.append(cv, Object.assign(document.createElement('b'), { textContent: m.name }), Object.assign(document.createElement('span'), { textContent: m.blurb }));
     nav.append(a);
   }
-  seedIn.addEventListener('input', () => { for (const a of nav.children) a.href = href(new URL(a.href).searchParams.get('map')); });
+  seedIn.addEventListener('input', relink);
 </script>

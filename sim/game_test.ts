@@ -2,7 +2,7 @@
 import { assert, assertEquals, assertNotEquals, assertStrictEquals } from '@std/assert';
 import { createGame } from './game.js';
 import { MAPS } from './maps.js';
-import { CFG, SPR } from './cfg.js';
+import { CFG, DIFF, SPR } from './cfg.js';
 
 const TT = CFG.threats, BT = CFG.batteries;
 const g0 = () => createGame({ seed: 1 });
@@ -321,4 +321,13 @@ Deno.test('every map plays: full loadout survives 3 waves and cities take only i
     assert(g.wave >= 3 && g.phase !== 'over', m.key);
     for (const c of g.cities) assert(c.hp >= 0 && c.hp <= CFG.cityHP, m.key);
   }
+});
+
+Deno.test('difficulty presets change cash and headcount ramp only', () => {
+  const easy = createGame({ seed: 1, cfg: DIFF.easy }), hard = createGame({ seed: 1, cfg: DIFF.hard });
+  assert(easy.cash > createGame({ seed: 1 }).cash && hard.cash < createGame({ seed: 1 }).cash);
+  assert(easy.cfg.wave.lateMult < hard.cfg.wave.lateMult);
+  assertEquals(easy.cfg.threats, hard.cfg.threats);
+  const x = createGame({ seed: 1, cfg: DIFF.expert }).cfg.threats as any;
+  assertEquals([x.lug.hp, x.anvil.hp, x.warden.hp], [1, 9, 360]);
 });

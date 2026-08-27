@@ -626,3 +626,14 @@ export const CFG = {
     },
   },
 };
+
+// ---- DIFFICULTY: cfg overrides passed to createGame. Cash and the headcount ramp move; expert also scales hp ×1.5
+// (1-hp fodder stays 1 so PAC still one-shots it — ×1.5 on everything killed a lookahead bot by wave 9).
+/** @param {number} m */
+const hpMult = (m) => Object.fromEntries(Object.entries(CFG.threats).map(([k, t]) => [k, { ...t, hp: t.hp <= 1 ? 1 : Math.round(t.hp * m) }]));
+export const DIFF = {
+  easy: { startCash: 1000, wave: { ...CFG.wave, lateMult: 0.09 } },
+  normal: {},
+  hard: { startCash: 500, wave: { ...CFG.wave, lateMult: 0.20 } },
+  expert: { startCash: 500, wave: { ...CFG.wave, lateMult: 0.60 }, threats: hpMult(1.5) }, // a scripted DEW-wall build dies at wave 25–30 in 11/12 seeds
+};
