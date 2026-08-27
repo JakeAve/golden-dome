@@ -29,21 +29,39 @@
   a.map canvas { width: 100%; image-rendering: pixelated; display: block; background: #63a9e7; }
   a.map b { display: block; color: #ffc94d; margin: 8px 0 2px; letter-spacing: 0.1em; }
   a.map span { color: #c2ccd6; font-weight: normal; font-size: 12px; }
-  label { color: #77838f; margin-top: 18px; font-weight: normal; }
-  input { font: inherit; width: 8em; background: #1d222b; color: #fff; border: 1px solid #404a58; padding: 2px 4px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 18px; }
+  .opts > label, .seg { display: flex; align-items: center; background: #1d222b; border: 2px solid #404a58; }
+  .opts > label { padding: 0 10px; gap: 10px; }
+  .opts b { color: #77838f; font-size: 11px; letter-spacing: 0.15em; }
+  #seed { font: inherit; width: 7em; background: none; color: #ffc94d; border: 0; padding: 8px 0; outline: none; }
+  #seed::placeholder { color: #77838f; font-weight: normal; }
+  .opts > label:focus-within, .seg:focus-within { border-color: #ffc94d; }
+  .seg { padding: 0; margin: 0; }
+  .seg b { padding: 0 10px; }
+  .seg label { position: relative; padding: 8px 10px; color: #c2ccd6; cursor: pointer; border-left: 2px solid #404a58; letter-spacing: 0.1em; }
+  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+  .seg label:has(:checked) { background: #ffc94d; color: #0b1220; }
+  .seg label:hover { color: #ffc94d; }
+  .seg label:has(:checked):hover { color: #0b1220; }
 </style>
 <h1>GOLDEN DOME</h1>
 <p>pick a map</p>
 <nav class="maps" id="maps"></nav>
-<label>seed <input id="seed" placeholder="random" inputmode="numeric"></label>
-<label>difficulty <select id="diff"><option>easy<option selected>normal<option>hard<option>expert</select></label>
+<div class="opts">
+  <label><b>SEED</b><input id="seed" placeholder="random" inputmode="numeric" autocomplete="off"></label>
+  <fieldset class="seg" id="diff"><b>DIFFICULTY</b>
+    <label>EASY<input type="radio" name="diff" value="easy"></label><label>NORMAL<input type="radio" name="diff" value="normal" checked></label><label>HARD<input type="radio" name="diff" value="hard"></label><label>EXPERT<input type="radio" name="diff" value="expert"></label>
+  </fieldset>
+</div>
 <script type="module">
   import { MAPS } from './sim/maps.js';
   import { W, GY } from './sim/cfg.js';
   const seedIn = document.getElementById('seed'), diffIn = document.getElementById('diff'), nav = document.getElementById('maps');
   const Q = new URLSearchParams(location.search);
-  seedIn.value = Q.get('seed') || ''; diffIn.value = Q.get('diff') || 'normal';
-  const href = (k) => `play.html?map=${k}` + (seedIn.value ? `&seed=${Number(seedIn.value) || ''}` : '') + (diffIn.value !== 'normal' ? `&diff=${diffIn.value}` : '');
+  seedIn.value = Q.get('seed') || '';
+  const diff = () => diffIn.querySelector(':checked').value;
+  (diffIn.querySelector(`[value="${Q.get('diff')}"]`) || {}).checked = true;
+  const href = (k) => `play.html?map=${k}` + (seedIn.value ? `&seed=${Number(seedIn.value) || ''}` : '') + (diff() !== 'normal' ? `&diff=${diff()}` : '');
   const relink = () => { for (const a of nav.children) a.href = href(new URL(a.href).searchParams.get('map')); };
   diffIn.addEventListener('change', relink);
   for (const m of Object.values(MAPS)) {
