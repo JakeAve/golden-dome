@@ -35,7 +35,7 @@
   }
 </style>
 <canvas id=c width=624 height=288></canvas>
-<a href="." style="position:fixed;top:6px;left:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none">◀ MAPS</a>
+<a href="." id=back style="position:fixed;top:6px;left:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none">◀ MAPS</a>
 <div id=boot style="position:fixed;inset:0;display:grid;place-items:center;color:#c2ccd6;font:14px ui-monospace,Menlo,monospace;text-align:center;padding:1em">Loading… if this stays, serve over HTTP: <code>deno task serve</code> → http://localhost:4507/</div>
 <script type="module">
   import { createGame } from './sim/game.js';
@@ -356,7 +356,7 @@
   let speed = 1, sel = null, selB = null, shake = 0, speedOpen = false;
   const SPEEDS = [0.5, 1, 2, 4];
   let lastSpeed = 1; const togglePause = () => { if (speed) { lastSpeed = speed; speed = 0; } else speed = lastSpeed; };
-  let toast = null;
+  let toast = null, leaving = false;
   let nuCache = { wave: -1, nu: [] };
 
 
@@ -589,6 +589,11 @@
       SPEEDS.forEach((v, i) => { const y = GY + 2 - 13 * (SPEEDS.length - i); UI.btns.unshift({ x: W - 116, y, w: 34, h: 13, act: 'speedSet', v }); button(W - 116, y, 34, 13, v + '×', null, v === (speed || lastSpeed) ? YOU[2] : STL[7], v === (speed || lastSpeed)); });
     }
     if (!speed && game.phase !== 'over' && game.phase !== 'win') { rect(0, 0, W, H, 'rgba(10,12,20,0.4)'); text('PAUSED', W / 2, H / 2 - 12, STL[7], 28, 'center'); text('tap to resume', W / 2, H / 2 + 12, STL[7], 13, 'center'); }
+    if (leaving) {
+      rect(0, 0, W, H, 'rgba(10,12,20,0.6)'); text('LEAVE THIS GAME?', W / 2, H / 2 - 12, THEM[2], 28, 'center');
+      UI.btns.unshift({ x: W / 2 - 110, y: H / 2 + 4, w: 100, h: 16, act: 'stay' }, { x: W / 2 + 10, y: H / 2 + 4, w: 100, h: 16, act: 'leave' });
+      button(W / 2 - 110, H / 2 + 4, 100, 16, 'STAY', null, YOU[2], true); button(W / 2 + 10, H / 2 + 4, 100, 16, 'LEAVE', null, THEM[2]);
+    }
     if (game.phase === 'over' || game.phase === 'win') {
       rect(0, 0, W, H, 'rgba(10,12,20,0.6)'); text(game.phase === 'win' ? 'DOME HELD' : 'CITIES LOST', W / 2, H / 2 - 12, game.phase === 'win' ? YOU[2] : THEM[2], 28, 'center'); if (game.phase === 'over') { UI.btns.push({ x: W / 2 - 110, y: H / 2 + 4, w: 100, h: 16, act: 'retry' }, { x: W / 2 + 10, y: H / 2 + 4, w: 100, h: 16, act: 'restart' }); button(W / 2 - 110, H / 2 + 4, 100, 16, `RETRY WAVE ${game.wave}`, null, YOU[2], true); button(W / 2 + 10, H / 2 + 4, 100, 16, 'RESTART', null, STL[7]); }
       else text(`wave ${game.wave} · tap to restart`, W / 2, H / 2 + 12, STL[7], 13, 'center');
@@ -605,6 +610,7 @@
   c.addEventListener('pointerdown', e => {
     e.preventDefault(); unmute(); const p = toWorld(e);
     const ui = UI.hit(p.x, p.y);
+    if (leaving) { if (ui && ui.act === 'leave') { if (leaving === 'back') history.go(-2); else location.href = '.'; } else leaving = false; return; }
     if (ui && ui.act === 'speedSet') { speed = lastSpeed = ui.v; speedOpen = false; return; }
     if (ui && ui.act === 'speed') { speedOpen = !speedOpen; return; }
     speedOpen = false;
@@ -635,7 +641,7 @@
   }
   let acc = 0;
   (function loop() {
-    acc += speed;
+    acc += leaving ? 0 : speed;
     while (acc >= 1) { acc--; game.step(); }
     for (const e of game.events) dispatch(e); game.events.length = 0;
     if (shake > 0) shake = Math.max(0, shake - speed);
@@ -643,6 +649,12 @@
     draw();
     requestAnimationFrame(loop);
   })();
+  const inPlay = () => game.phase !== 'over' && game.phase !== 'win' && (game.wave > 0 || batteries().length > 0);
+  document.getElementById('back').onclick = () => { if (!inPlay()) return true; leaving = 'link'; return false; };
+  // Back button: a trap entry so popstate shows the overlay instead of leaving; LEAVE then goes back past it.
+  history.replaceState({ gd: 0 }, ''); history.pushState({ gd: 1 }, '');
+  addEventListener('popstate', () => { if (inPlay()) { leaving = 'back'; history.pushState({ gd: 1 }, ''); } else history.back(); });
+  addEventListener('beforeunload', e => { if (inPlay() && !leaving) e.preventDefault(); });
   window.GD = game;
   Object.defineProperty(game, 'speed', { get: () => speed, set: v => { speed = v; }, configurable: true });
 </script>
