@@ -47,6 +47,19 @@
   const MAP = MAPS[Q.get('map')] || MAPS.valley;
   const FLATS = MAP.flats, FLOOR = Math.max(...FLATS.map(f => f.y));
   const game = createGame({ seed, map: MAP });
+  // ---- persistence: the sim is deterministic, so a save is just the command log (with ticks). Replay on load.
+  const SAVE = `gd:${MAP.key}:${seed}`, LOG = [];
+  let noSave = false;
+  const save = () => { if (noSave) return; try { localStorage.setItem(SAVE, JSON.stringify({ log: LOG, tick: game.tick })); } catch { /* private mode */ } };
+  const stepTo = t => { while (game.tick < t && (game.phase === 'build' || game.phase === 'wave')) game.step(); };
+  for (const k of ['build', 'upgrade', 'choosePath', 'sell', 'repair', 'startWave', 'retryWave']) {
+    const fn = game[k]; game[k] = (...a) => { const ok = fn(...a); if (ok) { LOG.push([k, game.tick, ...a]); save(); } return ok; };
+  }
+  try {
+    const sv = JSON.parse(localStorage.getItem(SAVE));
+    if (sv) { for (const [k, t, ...a] of sv.log) { stepTo(t); game[k](...a); } stepTo(sv.tick); game.events.length = 0; }
+  } catch { /* corrupt save: start fresh */ }
+  addEventListener('pagehide', save);
   // 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt) edge to edge.
   const c = document.getElementById('c'), g = c.getContext('2d');
   g.imageSmoothingEnabled = false;
@@ -616,7 +629,7 @@
     speedOpen = false;
     if (!speed && game.phase !== 'over' && game.phase !== 'win') { togglePause(); return; }
     const idx = selB ? SLOTS.indexOf(selB.slot) : -1;
-    if (game.phase === 'over' || game.phase === 'win') { if (ui && ui.act === 'retry') { if (game.retryWave()) { sel = null; selB = null; toast = null; } } else if (!ui || ui.act === 'restart') location.reload(); return; }
+    if (game.phase === 'over' || game.phase === 'win') { if (ui && ui.act === 'retry') { if (game.retryWave()) { sel = null; selB = null; toast = null; } } else if (!ui || ui.act === 'restart') { noSave = true; localStorage.removeItem(SAVE); location.reload(); } return; }
     if (ui) {
       if (ui.act === 'sel') { sel = sel === ui.k ? null : ui.k; selB = null; }
       else if (ui.act === 'start') { if (game.phase === 'wave') togglePause(); else if (game.startWave()) { selB = null; toast = null; } }
@@ -652,9 +665,8 @@
   const inPlay = () => game.phase !== 'over' && game.phase !== 'win' && (game.wave > 0 || batteries().length > 0);
   document.getElementById('back').onclick = () => { if (!inPlay()) return true; leaving = 'link'; return false; };
   // Back button: a trap entry so popstate shows the overlay instead of leaving; LEAVE then goes back past it.
-  history.replaceState({ gd: 0 }, ''); history.pushState({ gd: 1 }, '');
+  Q.set('seed', seed); Q.set('map', MAP.key); history.replaceState({ gd: 0 }, '', '?' + Q); history.pushState({ gd: 1 }, '');
   addEventListener('popstate', () => { if (inPlay()) { leaving = 'back'; history.pushState({ gd: 1 }, ''); } else history.back(); });
-  addEventListener('beforeunload', e => { if (inPlay() && !leaving) e.preventDefault(); });
   window.GD = game;
   Object.defineProperty(game, 'speed', { get: () => speed, set: v => { speed = v; }, configurable: true });
 </script>
