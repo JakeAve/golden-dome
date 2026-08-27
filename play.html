@@ -355,6 +355,7 @@
   // ---- state -------------------------------------------------------------------
   let speed = 1, sel = null, selB = null, shake = 0, speedOpen = false;
   const SPEEDS = [0.5, 1, 2, 4];
+  let lastSpeed = 1; const togglePause = () => { if (speed) { lastSpeed = speed; speed = 0; } else speed = lastSpeed; };
   let toast = null;
   let nuCache = { wave: -1, nu: [] };
 
@@ -567,9 +568,9 @@
       bx += 81;
     }
     UI.btns.push({ x: W - 78, y: GY + 2, w: 75, h: HUD - 4, act: 'start' }, { x: W - 116, y: GY + 2, w: 34, h: HUD - 4, act: 'speed' });
-    button(W - 116, GY + 2, 34, HUD - 4, speed + '×' + (speedOpen ? ' ▾' : ' ▴'), null, STL[6], speed !== 1);
+    button(W - 116, GY + 2, 34, HUD - 4, (speed || lastSpeed) + '×' + (speedOpen ? ' ▾' : ' ▴'), null, STL[6], (speed || lastSpeed) !== 1);
     if (game.phase === 'build') button(W - 78, GY + 2, 75, HUD - 4, game.wave ? 'NEXT ▶' : 'START ▶', null, YOU[3], game.tick % 40 < 20);
-    else button(W - 78, GY + 2, 75, HUD - 4, `${game.queue.length + game.foes.length} inbound`, null, THEM[3]);
+    else button(W - 78, GY + 2, 75, HUD - 4, `${speed ? '❚❚' : '▶'} ${game.queue.length + game.foes.length} inbound`, null, THEM[3], !speed);
     if (game.phase === 'build' && game.wave < MAXWAVE) {
       const dir = game.nextBias.x < W / 3 ? 'WEST' : game.nextBias.x > W * 2 / 3 ? 'EAST' : 'CENTER';
       if (nuCache.wave !== game.wave) {
@@ -585,8 +586,9 @@
     else if (!game.wave && game.phase === 'build') { const m = batteries().length ? 'Tap START when ready' : 'Pick a battery, place it on a pad'; text(m, W / 2, GY - 10, STL[7], 16, 'center'); }
     if (game.phase === 'wave') { const txt = `heavy from the ${game.bias.x < W / 3 ? 'WEST' : game.bias.x > W * 2 / 3 ? 'EAST' : 'CENTER'}`; text(txt, W / 2, 8, THEM[3], 14, 'center'); }
     if (speedOpen) { // drop-up: slowest at top, current highlighted; unshift so it wins the hit-test
-      SPEEDS.forEach((v, i) => { const y = GY + 2 - 13 * (SPEEDS.length - i); UI.btns.unshift({ x: W - 116, y, w: 34, h: 13, act: 'speedSet', v }); button(W - 116, y, 34, 13, v + '×', null, v === speed ? YOU[2] : STL[7], v === speed); });
+      SPEEDS.forEach((v, i) => { const y = GY + 2 - 13 * (SPEEDS.length - i); UI.btns.unshift({ x: W - 116, y, w: 34, h: 13, act: 'speedSet', v }); button(W - 116, y, 34, 13, v + '×', null, v === (speed || lastSpeed) ? YOU[2] : STL[7], v === (speed || lastSpeed)); });
     }
+    if (!speed && game.phase !== 'over' && game.phase !== 'win') { rect(0, 0, W, H, 'rgba(10,12,20,0.4)'); text('PAUSED', W / 2, H / 2 - 12, STL[7], 28, 'center'); text('tap to resume', W / 2, H / 2 + 12, STL[7], 13, 'center'); }
     if (game.phase === 'over' || game.phase === 'win') {
       rect(0, 0, W, H, 'rgba(10,12,20,0.6)'); text(game.phase === 'win' ? 'DOME HELD' : 'CITIES LOST', W / 2, H / 2 - 12, game.phase === 'win' ? YOU[2] : THEM[2], 28, 'center'); if (game.phase === 'over') { UI.btns.push({ x: W / 2 - 110, y: H / 2 + 4, w: 100, h: 16, act: 'retry' }, { x: W / 2 + 10, y: H / 2 + 4, w: 100, h: 16, act: 'restart' }); button(W / 2 - 110, H / 2 + 4, 100, 16, `RETRY WAVE ${game.wave}`, null, YOU[2], true); button(W / 2 + 10, H / 2 + 4, 100, 16, 'RESTART', null, STL[7]); }
       else text(`wave ${game.wave} · tap to restart`, W / 2, H / 2 + 12, STL[7], 13, 'center');
@@ -603,14 +605,15 @@
   c.addEventListener('pointerdown', e => {
     e.preventDefault(); unmute(); const p = toWorld(e);
     const ui = UI.hit(p.x, p.y);
-    if (ui && ui.act === 'speedSet') { speed = ui.v; speedOpen = false; return; }
+    if (ui && ui.act === 'speedSet') { speed = lastSpeed = ui.v; speedOpen = false; return; }
     if (ui && ui.act === 'speed') { speedOpen = !speedOpen; return; }
     speedOpen = false;
+    if (!speed && game.phase !== 'over' && game.phase !== 'win') { togglePause(); return; }
     const idx = selB ? SLOTS.indexOf(selB.slot) : -1;
     if (game.phase === 'over' || game.phase === 'win') { if (ui && ui.act === 'retry') { if (game.retryWave()) { sel = null; selB = null; toast = null; } } else if (!ui || ui.act === 'restart') location.reload(); return; }
     if (ui) {
       if (ui.act === 'sel') { sel = sel === ui.k ? null : ui.k; selB = null; }
-      else if (ui.act === 'start') { if (game.startWave()) { selB = null; toast = null; } }
+      else if (ui.act === 'start') { if (game.phase === 'wave') togglePause(); else if (game.startWave()) { selB = null; toast = null; } }
       else if (ui.act === 'up') game.upgrade(idx);
       else if (ui.act === 'pathA' || ui.act === 'pathB') game.choosePath(idx, ui.act.slice(-1));
       else if (ui.act === 'sell') { game.sell(idx); selB = null; }
@@ -623,6 +626,7 @@
     selB = null;
   });
   c.style.touchAction = 'none';
+  addEventListener('keydown', e => { if (e.key === 'p' || e.key === ' ') { e.preventDefault(); togglePause(); } });
 
   function dispatch(e) {
     if (e.t === 'sfx') sfx(e.k);
