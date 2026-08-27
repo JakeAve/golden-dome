@@ -36,6 +36,7 @@
 </style>
 <canvas id=c width=624 height=288></canvas>
 <a href="." id=back style="position:fixed;top:6px;left:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none">◀ MAPS</a>
+<a href="#" id=snd title="Sound effects" style="position:fixed;top:6px;right:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none;display:flex;align-items:center;gap:4px"><svg width=14 height=12 viewBox="0 0 14 12" fill="currentColor"><path d="M0 4h3l4-4v12L3 8H0z"/><path id=wav d="M9 3.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=wav2 d="M11 1.5a6 6 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=mute d="M9 3l4 6M13 3l-4 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span id=sndTxt></span></a>
 <div id=boot style="position:fixed;inset:0;display:grid;place-items:center;color:#c2ccd6;font:14px ui-monospace,Menlo,monospace;text-align:center;padding:1em">Loading… if this stays, serve over HTTP: <code>deno task serve</code> → http://localhost:4507/</div>
 <script type="module">
   import { createGame } from './sim/game.js';
@@ -384,9 +385,12 @@
   };
   let SHAPER = null; const shaper = () => { if (SHAPER) return SHAPER; const c = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; c[i] = Math.tanh(x * 6); } SHAPER = AC.createWaveShaper(); SHAPER.curve = c; SHAPER.connect(AC.destination); return SHAPER; };
   function noiseBuf(n) { const buf = AC.createBuffer(1, AC.sampleRate * n | 0, AC.sampleRate), ch = buf.getChannelData(0); for (let i = 0; i < ch.length; i++)ch[i] = Math.random() * 2 - 1; return buf; }
+  let muted = localStorage.getItem('gd:muted') === '1';
+  const snd = document.getElementById('snd'), drawSnd = () => { sndTxt.textContent = muted ? 'SFX OFF' : 'SFX ON'; snd.style.color = muted ? '#5c6873' : '#9aa6b2'; mute.style.display = muted ? '' : 'none'; wav.style.display = wav2.style.display = muted ? 'none' : ''; };
+  snd.onclick = e => { e.preventDefault(); muted = !muted; localStorage.setItem('gd:muted', muted ? '1' : '0'); drawSnd(); }; drawSnd();
   function sfx(k) {
     const d = SFX[k] || SFX[k.replace(/\d$/, '')];   // variants reuse their family's sound
-    if (!AC || !d) return;
+    if (!AC || !d || muted) return;
     const [w, f0, f1, dur, vol, noise, dist] = d, t = AC.currentTime, out = dist ? shaper() : AC.destination;
     const g = AC.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); g.connect(out);
     if (w === 'sweep') {
