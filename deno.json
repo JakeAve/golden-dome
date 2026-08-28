@@ -2,8 +2,9 @@
   "tasks": {
     "setup": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit .githooks/pre-push",
     "check": "deno fmt --check && deno lint && deno check sim/*.js sim/*.ts",
+    "sw-check": "deno run --allow-read --allow-run=git sim/sw_check.ts",
     "test": "deno test --allow-read=sim sim/",
-    "pre-commit": "deno task check && deno task test",
+    "pre-commit": "deno task check && deno task sw-check && deno task test",
     "pre-push": "deno task check && deno task test",
     "bench": "deno run sim/bench.ts",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server ."
