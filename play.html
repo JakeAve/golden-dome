@@ -32,14 +32,20 @@
     overflow: hidden
   }
 
+  /* keep the game out from under iPhone rounded corners / Dynamic Island / home bar (viewport-fit=cover) */
+  body {
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)
+  }
+
   canvas {
     image-rendering: pixelated;
     image-rendering: crisp-edges
   }
 </style>
 <canvas id=c width=624 height=288></canvas>
-<a href="." id=back style="position:fixed;top:6px;left:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none">◀ MAPS</a>
-<a href="#" id=snd title="Sound effects" style="position:fixed;top:6px;right:8px;color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none;display:flex;align-items:center;gap:4px"><svg width=14 height=12 viewBox="0 0 14 12" fill="currentColor"><path d="M0 4h3l4-4v12L3 8H0z"/><path id=wav d="M9 3.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=wav2 d="M11 1.5a6 6 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=mute d="M9 3l4 6M13 3l-4 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span id=sndTxt></span></a>
+<a href="." id=back style="position:fixed;top:max(6px,env(safe-area-inset-top));left:max(8px,env(safe-area-inset-left));color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none">◀ MAPS</a>
+<a href="#" id=snd title="Sound effects" style="position:fixed;top:max(6px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));color:#9aa6b2;font:bold 12px ui-monospace,Menlo,monospace;text-decoration:none;display:flex;align-items:center;gap:4px"><svg width=14 height=12 viewBox="0 0 14 12" fill="currentColor"><path d="M0 4h3l4-4v12L3 8H0z"/><path id=wav d="M9 3.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=wav2 d="M11 1.5a6 6 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.5"/><path id=mute d="M9 3l4 6M13 3l-4 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span id=sndTxt></span></a>
 <div id=boot style="position:fixed;inset:0;display:grid;place-items:center;color:#c2ccd6;font:14px ui-monospace,Menlo,monospace;text-align:center;padding:1em">Loading… if this stays, serve over HTTP: <code>deno task serve</code> → http://localhost:4507/</div>
 <script>navigator.serviceWorker?.register("sw.js");</script>
 <script type="module">
@@ -66,11 +72,16 @@
     if (sv) { for (const [k, t, ...a] of sv.log) { stepTo(t); game[k](...a); } stepTo(sv.tick); game.events.length = 0; }
   } catch { /* corrupt save: start fresh */ }
   addEventListener('pagehide', save);
-  // 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt) edge to edge.
+  // 624x288 = 2.167:1 -> iPhone 17 landscape (874x402pt). Fit inside the safe area (body padding = env(safe-area-inset-*)).
   const c = document.getElementById('c'), g = c.getContext('2d');
   g.imageSmoothingEnabled = false;
-  function fit() { const s = Math.max(1, Math.min(innerWidth / W, innerHeight / H)); c.style.width = (W * s | 0) + 'px'; c.style.height = (H * s | 0) + 'px'; }
-  addEventListener('resize', fit); fit();
+  function fit() {
+    const b = getComputedStyle(document.body), p = k => parseFloat(b[k]) || 0;
+    const s = Math.max(1, Math.min((innerWidth - p('paddingLeft') - p('paddingRight')) / W, (innerHeight - p('paddingTop') - p('paddingBottom')) / H));
+    c.style.width = (W * s | 0) + 'px'; c.style.height = (H * s | 0) + 'px';
+  }
+  // iOS standalone can report 0 insets until rotation settles; refit after orientation changes too.
+  addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 100)); fit();
 
   // ---- palette ---------------------------------------------------------------
   const SKY = ['#2f7fd0', '#4a95dc', '#63a9e7', '#7fbdf0', '#9dd0f6', '#bfe2fb', '#dcf0fd'];

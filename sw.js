@@ -1,6 +1,6 @@
 // @ts-nocheck service-worker globals, not in deno.window lib
 // Cache-first with background refresh. Bump VERSION on deploy to drop stale caches.
-const VERSION = 'gd-v1';
+const VERSION = 'gd-v2';
 const ASSETS = ['./', './index.html', './play.html', './manifest.json', './sim/cfg.js', './sim/maps.js', './sim/game.js', './sim/rng.js', './apple-touch-icon.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
